@@ -2,14 +2,14 @@ import { and, desc, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { getDb } from "./db";
-import { jobs, jobResponses, localCredentials, ratings, reports, users, workerProfiles, workerSkills } from "../drizzle/schema";
+import { jobs, jobResponses, ratings, reports, users, workerProfiles, workerSkills } from "../drizzle/schema";
 import { createJobId, createReportId, findMatchingFundis, getDashboardData, getWorkerProfile, isJobClient, JOB_STATUSES, PILOT_TRADES } from "./mjengo";
 import { notifyJobCreated } from "./emailNotifications";
 import { adminProcedure, protectedProcedure, publicProcedure, router } from "./_core/trpc";
-import { getSessionCookieOptions } from "./_core/cookies";
-import { COOKIE_NAME } from "@shared/const";
 import { systemRouter } from "./_core/systemRouter";
-import { createSessionToken, hashPassword, SESSION_DURATION_MS, verifyPassword } from "./_core/auth";
+import { endSupabaseSession, setSessionCookies } from "./_core/auth";
+import { createSupabaseClient } from "./_core/supabase";
+import { CONFIRMATION_EMAIL_COOLDOWN_MSG } from "@shared/const";
 
 const tradeSchema = z.enum(PILOT_TRADES);
 const statusSchema = z.enum(JOB_STATUSES);
@@ -40,71 +40,35 @@ export const appRouter = router({
       email: z.string().trim().email().max(320).transform(value => value.toLowerCase()),
       password: z.string().min(8).max(128),
     })).mutation(async ({ ctx, input }) => {
-      const db = await getDb();
-      if (!db) throw new Error("Database is not available");
-
-      const user = await db.transaction(async tx => {
-        const [existing] = await tx.select({ email: localCredentials.email })
-          .from(localCredentials)
-          .where(eq(localCredentials.email, input.email))
-          .limit(1);
-        if (existing) {
-          throw new TRPCError({ code: "CONFLICT", message: "An account with this email already exists" });
+      const supabase = createSupabaseClient();
+      const { data, error } = await supabase.auth.signUp({
+        email: input.email,
+        password: input.password,
+        options: { data: { name: input.name } },
+      });
+      if (error) {
+        if (error.status === 429 || error.code === "over_email_send_rate_limit" || error.message.includes("For security purposes")) {
+          throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: CONFIRMATION_EMAIL_COOLDOWN_MSG });
         }
-
-        const [inserted] = await tx.insert(users).values({
-          name: input.name,
-          email: input.email,
-        }).$returningId();
-        if (!inserted) throw new Error("Unable to create account");
-
-        await tx.insert(localCredentials).values({
-          email: input.email,
-          userId: inserted.id,
-          passwordHash: await hashPassword(input.password),
-        });
-
-        const [createdUser] = await tx.select().from(users).where(eq(users.id, inserted.id)).limit(1);
-        if (!createdUser) throw new Error("Unable to load newly created account");
-        return createdUser;
-      });
-
-      const token = await createSessionToken(user.id);
-      ctx.res.cookie(COOKIE_NAME, token, {
-        ...getSessionCookieOptions(ctx.req),
-        maxAge: SESSION_DURATION_MS,
-      });
-      return { success: true };
+        throw new TRPCError({ code: "BAD_REQUEST", message: error.message });
+      }
+      if (data.session) setSessionCookies(ctx.req, ctx.res, data.session);
+      return { success: true, confirmationRequired: !data.session };
     }),
     login: publicProcedure.input(z.object({
       email: z.string().trim().email().max(320).transform(value => value.toLowerCase()),
       password: z.string().min(1).max(128),
     })).mutation(async ({ ctx, input }) => {
-      const db = await getDb();
-      if (!db) throw new Error("Database is not available");
-
-      const [account] = await db.select({
-        userId: users.id,
-        passwordHash: localCredentials.passwordHash,
-      })
-        .from(localCredentials)
-        .innerJoin(users, eq(users.id, localCredentials.userId))
-        .where(eq(localCredentials.email, input.email))
-        .limit(1);
-      const passwordMatches = await verifyPassword(input.password, account?.passwordHash);
-      if (!account || !passwordMatches) {
+      const supabase = createSupabaseClient();
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: input.email,
+        password: input.password,
+      });
+      if (error || !data.session || !data.user) {
         throw new TRPCError({ code: "UNAUTHORIZED", message: "Invalid email or password" });
       }
 
-      await db.update(users)
-        .set({ lastSignedIn: new Date(), updatedAt: new Date() })
-        .where(eq(users.id, account.userId));
-
-      const token = await createSessionToken(account.userId);
-      ctx.res.cookie(COOKIE_NAME, token, {
-        ...getSessionCookieOptions(ctx.req),
-        maxAge: SESSION_DURATION_MS,
-      });
+      setSessionCookies(ctx.req, ctx.res, data.session);
       return { success: true };
     }),
     setRole: protectedProcedure.input(z.object({ role: z.enum(["client", "fundi"]) })).mutation(async ({ ctx, input }) => {
@@ -117,9 +81,8 @@ export const appRouter = router({
       await db.update(users).set({ role: input.role, updatedAt: new Date() }).where(eq(users.id, ctx.user.id));
       return { role: input.role };
     }),
-    logout: publicProcedure.mutation(({ ctx }) => {
-      const cookieOptions = getSessionCookieOptions(ctx.req);
-      ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
+    logout: publicProcedure.mutation(async ({ ctx }) => {
+      await endSupabaseSession(ctx.req, ctx.res);
       return { success: true } as const;
     }),
   }),
@@ -152,7 +115,7 @@ export const appRouter = router({
       let workerId = existing?.profile.id;
       if (workerId) await db.update(workerProfiles).set(profileValues).where(eq(workerProfiles.id, workerId));
       else {
-        const inserted = await db.insert(workerProfiles).values({ userId: ctx.user.id, ...profileValues }).$returningId();
+        const inserted = await db.insert(workerProfiles).values({ userId: ctx.user.id, ...profileValues }).returning({ id: workerProfiles.id });
         workerId = inserted[0]?.id;
       }
       if (!workerId) throw new Error("Unable to save fundi profile");

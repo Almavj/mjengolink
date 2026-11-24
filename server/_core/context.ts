@@ -14,6 +14,6 @@ export async function createContext(
   return {
     req: opts.req,
     res: opts.res,
-    user: await authenticateRequest(opts.req),
+    user: await authenticateRequest(opts.req, opts.res),
   };
 }

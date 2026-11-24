@@ -1,24 +1,38 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { createSessionToken, getSessionUserId, hashPassword, verifyPassword } from "./auth";
+import { describe, expect, it } from "vitest";
+import { ACCESS_TOKEN_COOKIE_NAME, REFRESH_TOKEN_COOKIE_NAME, setSessionCookies } from "./auth";
+import type { Request, Response } from "express";
 
-afterEach(() => vi.unstubAllEnvs());
+describe("Supabase session cookies", () => {
+  it("stores access and refresh tokens in HTTP-only same-site cookies", () => {
+    const calls: Array<{ name: string; value: string; options: Record<string, unknown> }> = [];
+    const req = {
+      protocol: "https",
+      secure: true,
+      headers: {},
+      get: () => undefined,
+    } as Request;
+    const res = {
+      cookie: (name: string, value: string, options: Record<string, unknown>) => {
+        calls.push({ name, value, options });
+      },
+    } as Response;
 
-describe("local authentication", () => {
-  it("hashes passwords and rejects mismatches", async () => {
-    const password = "correct horse battery staple";
-    const passwordHash = await hashPassword(password);
+    setSessionCookies(req, res, {
+      access_token: "access",
+      refresh_token: "refresh",
+      expires_in: 3600,
+    });
 
-    expect(passwordHash).not.toContain(password);
-    await expect(verifyPassword(password, passwordHash)).resolves.toBe(true);
-    await expect(verifyPassword("incorrect password", passwordHash)).resolves.toBe(false);
-    await expect(verifyPassword(password, undefined)).resolves.toBe(false);
-  });
-
-  it("signs sessions for local user IDs and rejects tampered tokens", async () => {
-    vi.stubEnv("APP_SESSION_SECRET", "test-session-secret-with-at-least-32-characters");
-    const token = await createSessionToken(42);
-
-    await expect(getSessionUserId(token)).resolves.toBe(42);
-    await expect(getSessionUserId(`${token}tampered`)).resolves.toBeNull();
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toMatchObject({
+      name: ACCESS_TOKEN_COOKIE_NAME,
+      value: "access",
+      options: { maxAge: 3_600_000, secure: true, httpOnly: true, sameSite: "lax", path: "/" },
+    });
+    expect(calls[1]).toMatchObject({
+      name: REFRESH_TOKEN_COOKIE_NAME,
+      value: "refresh",
+      options: { secure: true, httpOnly: true, sameSite: "lax", path: "/" },
+    });
   });
 });

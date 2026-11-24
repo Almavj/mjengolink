@@ -1,84 +1,106 @@
-import { randomBytes, scrypt as scryptCallback, timingSafeEqual } from "node:crypto";
 import { parse as parseCookieHeader } from "cookie";
-import { SignJWT, jwtVerify } from "jose";
-import type { Request } from "express";
+import type { Request, Response } from "express";
+import type { User as SupabaseUser } from "@supabase/supabase-js";
 import { eq } from "drizzle-orm";
 import { users } from "../../drizzle/schema";
-import { COOKIE_NAME, SESSION_DURATION_MS } from "@shared/const";
 import { getDb } from "../db";
+import { createSupabaseClient } from "./supabase";
+import { getSessionCookieOptions } from "./cookies";
 
-const SALT_BYTES = 16;
-const KEY_BYTES = 64;
+export const ACCESS_TOKEN_COOKIE_NAME = "mjengolink_access_token";
+export const REFRESH_TOKEN_COOKIE_NAME = "mjengolink_refresh_token";
+const REFRESH_COOKIE_MAX_AGE = 30 * 24 * 60 * 60 * 1000;
 
-async function derivePasswordKey(password: string, salt: Buffer): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    scryptCallback(password, salt, KEY_BYTES, (error, derivedKey) => {
-      if (error) reject(error);
-      else resolve(derivedKey);
-    });
+function setSessionCookies(req: Request, res: Response, session: {
+  access_token: string;
+  refresh_token: string;
+  expires_in: number;
+}) {
+  const options = getSessionCookieOptions(req);
+  res.cookie(ACCESS_TOKEN_COOKIE_NAME, session.access_token, {
+    ...options,
+    maxAge: session.expires_in * 1000,
+  });
+  res.cookie(REFRESH_TOKEN_COOKIE_NAME, session.refresh_token, {
+    ...options,
+    maxAge: REFRESH_COOKIE_MAX_AGE,
   });
 }
 
-export async function hashPassword(password: string): Promise<string> {
-  const salt = randomBytes(SALT_BYTES);
-  const key = await derivePasswordKey(password, salt);
-  return `scrypt$${salt.toString("base64url")}$${key.toString("base64url")}`;
+export function clearSessionCookies(req: Request, res: Response) {
+  const options = getSessionCookieOptions(req);
+  res.clearCookie(ACCESS_TOKEN_COOKIE_NAME, options);
+  res.clearCookie(REFRESH_TOKEN_COOKIE_NAME, options);
 }
 
-export async function verifyPassword(password: string, encodedHash: string | null | undefined): Promise<boolean> {
-  const parts = encodedHash?.split("$");
-  const isScryptHash = parts?.length === 3 && parts[0] === "scrypt";
-  const salt = isScryptHash ? Buffer.from(parts[1] ?? "", "base64url") : Buffer.alloc(SALT_BYTES);
-  const expected = isScryptHash ? Buffer.from(parts[2] ?? "", "base64url") : Buffer.alloc(KEY_BYTES);
-  const wellFormed = isScryptHash && salt.length === SALT_BYTES && expected.length === KEY_BYTES;
-  const actual = await derivePasswordKey(password, wellFormed ? salt : Buffer.alloc(SALT_BYTES));
-  return Boolean(wellFormed && timingSafeEqual(actual, expected));
-}
+export async function authenticateRequest(req: Request, res: Response) {
+  const cookies = parseCookieHeader(req.headers.cookie ?? "");
+  const accessToken = cookies[ACCESS_TOKEN_COOKIE_NAME];
+  const refreshToken = cookies[REFRESH_TOKEN_COOKIE_NAME];
+  if (!accessToken && !refreshToken) return null;
 
-function getSessionSecret(): Uint8Array {
-  const secret = process.env.APP_SESSION_SECRET;
-  if (!secret || Buffer.byteLength(secret) < 32) {
-    throw new Error("APP_SESSION_SECRET must be configured with at least 32 bytes");
+  const supabase = createSupabaseClient();
+  let authUser: SupabaseUser | null = null;
+  if (accessToken) {
+    const result = await supabase.auth.getUser(accessToken);
+    if (result.error) {
+      if (result.error.status !== 401 && result.error.status !== 403) {
+        throw new Error(`Supabase authentication failed: ${result.error.message}`);
+      }
+    } else {
+      authUser = result.data.user;
+    }
   }
-  return new TextEncoder().encode(secret);
-}
 
-export async function createSessionToken(userId: number): Promise<string> {
-  return new SignJWT({})
-    .setProtectedHeader({ alg: "HS256", typ: "JWT" })
-    .setIssuer("mjengolink")
-    .setAudience("mjengolink")
-    .setSubject(String(userId))
-    .setIssuedAt()
-    .setExpirationTime(Math.floor((Date.now() + SESSION_DURATION_MS) / 1000))
-    .sign(getSessionSecret());
-}
+  if (!authUser && refreshToken) {
+    const refreshed = await supabase.auth.refreshSession({ refresh_token: refreshToken });
+    if (refreshed.error) {
+      if (refreshed.error.status !== 400 && refreshed.error.status !== 401 && refreshed.error.status !== 403) {
+        throw new Error(`Supabase session refresh failed: ${refreshed.error.message}`);
+      }
+      clearSessionCookies(req, res);
+      return null;
+    }
+    if (refreshed.data.session) {
+      setSessionCookies(req, res, refreshed.data.session);
+      authUser = refreshed.data.user;
+    }
+  }
 
-export async function getSessionUserId(token: string): Promise<number | null> {
-  const secret = getSessionSecret();
-  try {
-    const { payload } = await jwtVerify(token, secret, {
-      algorithms: ["HS256"],
-      issuer: "mjengolink",
-      audience: "mjengolink",
-    });
-    const userId = Number(payload.sub);
-    return Number.isSafeInteger(userId) && userId > 0 ? userId : null;
-  } catch {
+  if (!authUser) {
+    clearSessionCookies(req, res);
     return null;
   }
-}
-
-export async function authenticateRequest(req: Request) {
-  const token = parseCookieHeader(req.headers.cookie ?? "")[COOKIE_NAME];
-  if (!token) return null;
-  const userId = await getSessionUserId(token);
-  if (userId === null) return null;
 
   const db = await getDb();
   if (!db) throw new Error("Database is not available");
-  const [user] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
-  return user ?? null;
+  const [user] = await db.select().from(users).where(eq(users.authUserId, authUser.id)).limit(1);
+  if (!user) throw new Error("Supabase account is missing its MjengoLink profile");
+  return user;
 }
 
-export { SESSION_DURATION_MS };
+export async function endSupabaseSession(req: Request, res: Response) {
+  const cookies = parseCookieHeader(req.headers.cookie ?? "");
+  const accessToken = cookies[ACCESS_TOKEN_COOKIE_NAME];
+  const refreshToken = cookies[REFRESH_TOKEN_COOKIE_NAME];
+  try {
+    if (accessToken && refreshToken) {
+      const supabase = createSupabaseClient();
+      const { error: sessionError } = await supabase.auth.setSession({
+        access_token: accessToken,
+        refresh_token: refreshToken,
+      });
+      if (sessionError && sessionError.status !== 400 && sessionError.status !== 401 && sessionError.status !== 403) {
+        throw new Error(`Supabase sign-out failed: ${sessionError.message}`);
+      }
+      if (!sessionError) {
+        const { error } = await supabase.auth.signOut({ scope: "local" });
+        if (error) throw new Error(`Supabase sign-out failed: ${error.message}`);
+      }
+    }
+  } finally {
+    clearSessionCookies(req, res);
+  }
+}
+
+export { setSessionCookies };

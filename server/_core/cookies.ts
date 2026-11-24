@@ -5,7 +5,7 @@ export function getSessionCookieOptions(req: Request): CookieOptions {
   return {
     httpOnly: true,
     path: "/",
-    sameSite: "lax",
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
     secure: req.secure || forwardedProtocol === "https" || process.env.NODE_ENV === "production",
   };
 }

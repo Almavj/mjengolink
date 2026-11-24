@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { getSessionCookieOptions } from "./_core/cookies";
-import { COOKIE_NAME } from "../shared/const";
+import { ACCESS_TOKEN_COOKIE_NAME, REFRESH_TOKEN_COOKIE_NAME } from "./_core/auth";
 
-describe("application session cookie", () => {
-  it("uses an HTTP-only same-site application session cookie", () => {
-    expect(COOKIE_NAME).toBe("mjengolink_session");
+describe("Supabase auth cookie settings", () => {
+  it("uses separate HTTP-only cookies for access and refresh tokens", () => {
+    expect(ACCESS_TOKEN_COOKIE_NAME).toBe("mjengolink_access_token");
+    expect(REFRESH_TOKEN_COOKIE_NAME).toBe("mjengolink_refresh_token");
     const request = (secure: boolean, protocol: string) => ({
       protocol, secure, headers: {}, get: () => undefined,
     }) as never;

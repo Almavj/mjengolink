@@ -1,16 +1,12 @@
-import { drizzle } from "drizzle-orm/mysql2";
+import { drizzle } from "drizzle-orm/postgres-js";
+import postgres from "postgres";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
-// Lazily create the drizzle instance so local tooling can run without a DB.
+// Lazily create the database connection so local tooling can run without Supabase.
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
-    try {
-      _db = drizzle(process.env.DATABASE_URL);
-    } catch (error) {
-      console.warn("[Database] Failed to connect:", error);
-      _db = null;
-    }
+    _db = drizzle(postgres(process.env.DATABASE_URL, { prepare: false }));
   }
   return _db;
 }

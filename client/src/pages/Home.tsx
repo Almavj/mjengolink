@@ -39,6 +39,7 @@ import {
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { trpc } from "@/lib/trpc";
+import { CONFIRMATION_EMAIL_COOLDOWN_MSG } from "@shared/const";
 
 type Role = "client" | "fundi" | "admin";
 type NavKey = "overview" | "jobs" | "fundis" | "history" | "responses" | "profile" | "reports";
@@ -398,19 +399,33 @@ function LoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
   const isPending = loginMutation.isPending || registerMutation.isPending;
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setError("");
+    setMessage("");
     try {
       if (mode === "register") {
-        await registerMutation.mutateAsync({ name, email, password });
+        const result = await registerMutation.mutateAsync({ name, email, password });
+        if (result.confirmationRequired) {
+          setMode("login");
+          setPassword("");
+          setMessage("Check your inbox and spam folder for a confirmation email. Once confirmed, sign in. If it hasn't arrived, wait 60 seconds before trying again.");
+          return;
+        }
       } else {
         await loginMutation.mutateAsync({ email, password });
       }
       await utils.auth.me.invalidate();
     } catch (cause) {
+      if (cause instanceof Error && cause.message === CONFIRMATION_EMAIL_COOLDOWN_MSG) {
+        setMode("login");
+        setPassword("");
+        setMessage(CONFIRMATION_EMAIL_COOLDOWN_MSG);
+        return;
+      }
       setError(cause instanceof Error ? cause.message : "Unable to sign in. Please try again.");
     }
   };
@@ -443,9 +458,10 @@ function LoginForm() {
           </button>
         </form>
         {error && <div className="auth-error" role="alert">{error}</div>}
+        {message && <p role="status">{message}</p>}
         <div className="auth-switch">
           {mode === "login" ? "New to MjengoLink?" : "Already have an account?"}
-          <button type="button" onClick={() => { setMode(mode === "login" ? "register" : "login"); setError(""); }}>
+          <button type="button" onClick={() => { setMode(mode === "login" ? "register" : "login"); setError(""); setMessage(""); }}>
             {mode === "login" ? "Create an account" : "Sign in"}
           </button>
         </div>

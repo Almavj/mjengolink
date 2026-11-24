@@ -1,12 +1,12 @@
 # MjengoLink implementation plan
 
 ## Product approach
-MjengoLink is a mobile-first, responsive web application for the Eldoret/Uasin Gishu construction-job pilot described in the attached proposal. Local email/password accounts, a managed MySQL/Drizzle data model and protected tRPC procedures tie client, fundi and admin actions to server identities rather than a browser role switch.
+MjengoLink is a mobile-first, responsive web application for the Eldoret/Uasin Gishu construction-job pilot described in the attached proposal. Supabase Auth email/password accounts, a Supabase PostgreSQL/Drizzle data model and protected tRPC procedures tie client, fundi and admin actions to server identities rather than a browser role switch.
 
 The app is implemented as a React/Vite client inside the Express/tRPC/Drizzle project. Users register or sign in with email and password, then choose client or fundi during onboarding; only a server-granted admin role can enter the control room. Jobs, fundi profiles, trade skills, responses, ratings, reports and approximate coordinates are persisted in the managed database.
 
 ## Main modules
-- Authentication and role onboarding: local password accounts, client/fundi first-use selection, and server-derived admin access.
+- Authentication and role onboarding: Supabase Auth password accounts, client/fundi first-use selection, and server-derived admin access.
 - Client dashboard: active-job overview, post-job modal, matched fundis, job workflow, completion and rating entry points.
 - Fundi board: nearby/eligible jobs, trade and radius filtering, express-interest action, availability toggle, profile/trust summary.
 - Admin view: platform metrics, moderation queue, recent activity and report resolution action.
@@ -26,7 +26,7 @@ The app has three roles, not three separate apps. A client creates and manages d
 - `NOTIFICATIONS.md`: role rationale, routing rules, and production notes.
 - `plan.md`: implementation and design decisions.
 - `TODO.md`: acceptance-oriented delivery tracking.
-- `drizzle/schema.ts`, `drizzle/0001_curvy_king_cobra.sql`, `server/mjengo.ts` and `server/routers.ts`: persistent domain model, matching helpers and protected feature API.
+- `drizzle/schema.ts`, `supabase/setup.sql`, `server/mjengo.ts` and `server/routers.ts`: persistent domain model, Supabase setup, matching helpers and protected feature API.
 
 ## Design
 

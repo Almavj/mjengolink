@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { appRouter } from "./routers";
-import { COOKIE_NAME } from "../shared/const";
+import { ACCESS_TOKEN_COOKIE_NAME, REFRESH_TOKEN_COOKIE_NAME } from "./_core/auth";
 import type { TrpcContext } from "./_core/context";
 
 type CookieCall = {
@@ -15,12 +15,12 @@ function createAuthContext(): { ctx: TrpcContext; clearedCookies: CookieCall[] }
 
   const user: AuthenticatedUser = {
     id: 1,
+    authUserId: "9f1e00f0-04e6-4f4f-9f4d-593ad79020c0",
     email: "sample@example.com",
     name: "Sample User",
     role: "user",
     createdAt: new Date(),
     updatedAt: new Date(),
-    lastSignedIn: new Date(),
   };
 
   const ctx: TrpcContext = {
@@ -42,17 +42,19 @@ function createAuthContext(): { ctx: TrpcContext; clearedCookies: CookieCall[] }
 }
 
 describe("auth.logout", () => {
-  it("clears the session cookie and reports success", async () => {
+  it("clears the access and refresh cookies and reports success", async () => {
     const { ctx, clearedCookies } = createAuthContext();
     const caller = appRouter.createCaller(ctx);
 
     const result = await caller.auth.logout();
 
     expect(result).toEqual({ success: true });
-    expect(clearedCookies).toHaveLength(1);
-    expect(clearedCookies[0]?.name).toBe(COOKIE_NAME);
+    expect(clearedCookies).toHaveLength(2);
+    expect(clearedCookies.map(cookie => cookie.name)).toEqual([
+      ACCESS_TOKEN_COOKIE_NAME,
+      REFRESH_TOKEN_COOKIE_NAME,
+    ]);
     expect(clearedCookies[0]?.options).toMatchObject({
-      maxAge: -1,
       secure: true,
       sameSite: "lax",
       httpOnly: true,

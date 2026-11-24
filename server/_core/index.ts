@@ -12,9 +12,45 @@ import { eq } from "drizzle-orm";
 import { findMatchingFundis } from "../mjengo";
 import { authenticateRequest } from "./auth";
 
+function getRootCause(error: unknown): unknown {
+  let cause = error;
+  while (cause instanceof Error && cause.cause instanceof Error && cause.cause !== cause) {
+    cause = cause.cause;
+  }
+  return cause;
+}
+
 async function startServer() {
   const app = express();
   const server = createServer(app);
+  const allowedOrigins = new Set([
+    ...(process.env.CORS_ORIGINS ?? "").split(",").map(origin => origin.trim()).filter(Boolean),
+    ...(process.env.NODE_ENV === "development"
+      ? ["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:5173", "http://127.0.0.1:5173"]
+      : []),
+  ]);
+  app.use((req, res, next) => {
+    const origin = req.get("origin");
+    if (!origin) {
+      next();
+      return;
+    }
+    if (!allowedOrigins.has(origin)) {
+      res.status(403).json({ error: "Origin is not allowed" });
+      return;
+    }
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+    res.vary("Origin");
+    if (req.method === "OPTIONS") {
+      res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", req.get("access-control-request-headers") ?? "content-type");
+      res.setHeader("Access-Control-Max-Age", "600");
+      res.sendStatus(204);
+      return;
+    }
+    next();
+  });
   // Configure body parser with larger size limit for file uploads
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
@@ -22,7 +58,7 @@ async function startServer() {
   app.post("/api/notifications/job-created", async (req, res) => {
     let user;
     try {
-      user = await authenticateRequest(req);
+      user = await authenticateRequest(req, res);
     } catch (error) {
       console.error("[Notifications] Authentication failed:", error);
       res.status(500).json({ error: "Unable to authenticate request" });
@@ -68,6 +104,18 @@ async function startServer() {
     createExpressMiddleware({
       router: appRouter,
       createContext,
+      onError({ error, path }) {
+        if (error.code !== "INTERNAL_SERVER_ERROR") return;
+        const cause = getRootCause(error.cause);
+        const causeCode = cause && typeof cause === "object" && "code" in cause && typeof cause.code === "string"
+          ? cause.code
+          : undefined;
+        console.error("[tRPC] Internal request failure", {
+          path,
+          cause: cause instanceof Error && causeCode ? cause.message : cause instanceof Error ? cause.name : "Unknown internal error",
+          code: causeCode,
+        });
+      },
     })
   );
   // development mode uses Vite, production mode uses static files

@@ -7,6 +7,8 @@ import App from "./App";
 import "./index.css";
 
 const queryClient = new QueryClient();
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim();
+const trpcUrl = apiBaseUrl ? new URL("/api/trpc", apiBaseUrl).toString() : "/api/trpc";
 
 queryClient.getQueryCache().subscribe(event => {
   if (event.type === "updated" && event.action.type === "error") {
@@ -25,7 +27,7 @@ queryClient.getMutationCache().subscribe(event => {
 const trpcClient = trpc.createClient({
   links: [
     httpBatchLink({
-      url: "/api/trpc",
+      url: trpcUrl,
       transformer: superjson,
       fetch(input, init) {
         return globalThis.fetch(input, {

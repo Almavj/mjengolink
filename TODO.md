@@ -34,7 +34,8 @@
 - [x] Resend delivery is supported through server-side `RESEND_API_KEY`, `EMAIL_FROM`, and optional `EMAIL_REPLY_TO` settings.
 
 ## Persistence and delivery
-- [x] Local accounts, roles, fundi profiles, skills, jobs, responses, ratings/comments and reports are stored in Drizzle/MySQL tables.
+- [x] Supabase Auth accounts and application roles are linked to Supabase PostgreSQL fundi profiles, skills, jobs, responses, ratings/comments and reports.
+- [x] Supabase setup SQL enables row-level security and provisions private profile-photo and job-attachment buckets.
 - [x] A manual estate/landmark location is accepted when GPS coordinates are unavailable; when approximate coordinates exist, matching uses configurable radius and Haversine distance without exposing live precise locations.
 - [x] The app serves the `/` and `/404` routes.
 - [x] TypeScript diagnostics and production build pass.
