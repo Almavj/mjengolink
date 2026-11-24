@@ -1,0 +1,8 @@
+// External service values are read at use time.
+export const ENV = {
+  get databaseUrl() { return process.env.DATABASE_URL ?? ""; },
+  get isProduction() { return process.env.NODE_ENV === "production"; },
+  get resendApiKey() { return process.env.RESEND_API_KEY ?? ""; },
+  get emailFrom() { return process.env.EMAIL_FROM ?? "MjengoLink <notifications@mjengolink.example>"; },
+  get emailReplyTo() { return process.env.EMAIL_REPLY_TO ?? ""; },
+};

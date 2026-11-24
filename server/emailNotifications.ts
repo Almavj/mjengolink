@@ -1,0 +1,79 @@
+import { ENV } from "./_core/env";
+
+type Recipient = { name: string; email: string; distance?: string };
+
+type JobCreatedPayload = {
+  job: { id: string; title: string; trade: string; location: string; budget: string; startDate: string; description: string };
+  client: Recipient;
+  eligibleFundis: Recipient[];
+  admin?: Recipient;
+};
+
+function isEmail(value: unknown): value is string {
+  return typeof value === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+function escapeHtml(value: string) {
+  return value.replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character] ?? character);
+}
+
+function textForFundi(payload: JobCreatedPayload, fundi: Recipient) {
+  const { job } = payload;
+  return `Hi ${fundi.name},\n\nA new ${job.trade.toLowerCase()} job is available near you on MjengoLink.\n\n${job.title}\nLocation: ${job.location}\nApproximate distance: ${fundi.distance ?? "nearby"}\nProposed pay: ${job.budget}\nStart: ${job.startDate}\n\nOpen MjengoLink to read the brief and show interest. Confirm the site, scope and price directly before accepting.\n\nKazi karibu na wewe.\nMjengoLink`;
+}
+
+function htmlForFundi(payload: JobCreatedPayload, fundi: Recipient) {
+  const { job } = payload;
+  return `<div style="font-family:Arial,sans-serif;line-height:1.6;color:#1d2925"><p>Hi ${escapeHtml(fundi.name)},</p><p>A new <strong>${escapeHtml(job.trade.toLowerCase())}</strong> job is available near you on MjengoLink.</p><div style="border-left:4px solid #0b5d43;padding:10px 14px;background:#e1eee7"><strong>${escapeHtml(job.title)}</strong><br>Location: ${escapeHtml(job.location)}<br>Approximate distance: ${escapeHtml(fundi.distance ?? "nearby")}<br>Proposed pay: ${escapeHtml(job.budget)}<br>Start: ${escapeHtml(job.startDate)}</div><p>Open MjengoLink to read the brief and show interest. Confirm the site, scope and price directly before accepting.</p><p>Kazi karibu na wewe.<br>MjengoLink</p></div>`;
+}
+
+function textForClient(payload: JobCreatedPayload) {
+  const { job } = payload;
+  return `Hi ${payload.client.name},\n\nYour MjengoLink job is live.\n\n${job.id} · ${job.title}\nTrade: ${job.trade}\nLocation: ${job.location}\nProposed pay: ${job.budget}\nStart: ${job.startDate}\n\nWe will show it to available fundis whose trade matches. Review interest and confirm the scope, price and site directly before work begins.\n\nMjengoLink`;
+}
+
+function htmlForClient(payload: JobCreatedPayload) {
+  const { job } = payload;
+  return `<div style="font-family:Arial,sans-serif;line-height:1.6;color:#1d2925"><p>Hi ${escapeHtml(payload.client.name)},</p><p>Your MjengoLink job is live.</p><div style="border-left:4px solid #0b5d43;padding:10px 14px;background:#e1eee7"><strong>${escapeHtml(job.id)} · ${escapeHtml(job.title)}</strong><br>Trade: ${escapeHtml(job.trade)}<br>Location: ${escapeHtml(job.location)}<br>Proposed pay: ${escapeHtml(job.budget)}<br>Start: ${escapeHtml(job.startDate)}</div><p>We will show it to available fundis whose trade matches. Review interest and confirm the scope, price and site directly before work begins.</p><p>MjengoLink</p></div>`;
+}
+
+function textForAdmin(payload: JobCreatedPayload) {
+  const { job } = payload;
+  return `A new MjengoLink job was posted.\n\n${job.id} · ${job.title}\nTrade: ${job.trade}\nLocation: ${job.location}\nProposed pay: ${job.budget}\nEligible active fundis notified: ${payload.eligibleFundis.length}\n\nReview the admin control room for pilot oversight.`;
+}
+
+function htmlForAdmin(payload: JobCreatedPayload) {
+  const { job } = payload;
+  return `<div style="font-family:Arial,sans-serif;line-height:1.6;color:#1d2925"><p>A new MjengoLink job was posted.</p><div style="border-left:4px solid #b7432d;padding:10px 14px;background:#f4e2dc"><strong>${escapeHtml(job.id)} · ${escapeHtml(job.title)}</strong><br>Trade: ${escapeHtml(job.trade)}<br>Location: ${escapeHtml(job.location)}<br>Proposed pay: ${escapeHtml(job.budget)}<br>Eligible active fundis notified: ${payload.eligibleFundis.length}</div><p>Review the admin control room for pilot oversight.</p></div>`;
+}
+
+async function sendEmail(input: { to: Recipient; subject: string; text: string; html: string }) {
+  if (!ENV.resendApiKey || ENV.emailFrom.includes("mjengolink.example")) return { sent: false, reason: "provider_not_configured" as const };
+  if (!isEmail(input.to.email)) return { sent: false, reason: "invalid_recipient" as const };
+
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: { accept: "application/json", authorization: `Bearer ${ENV.resendApiKey}`, "content-type": "application/json" },
+    body: JSON.stringify({ from: ENV.emailFrom, to: [input.to.email], subject: input.subject, text: input.text, html: input.html, ...(ENV.emailReplyTo ? { reply_to: ENV.emailReplyTo } : {}) }),
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(`Email provider returned ${response.status}${detail ? `: ${detail}` : ""}`);
+  }
+  return { sent: true as const, reason: "sent" as const };
+}
+
+export async function notifyJobCreated(payload: JobCreatedPayload) {
+  const recipients = [
+    { to: payload.client, subject: `Your MjengoLink job is live · ${payload.job.id}`, text: textForClient(payload), html: htmlForClient(payload) },
+    ...payload.eligibleFundis.map((fundi) => ({ to: fundi, subject: `New ${payload.job.trade.toLowerCase()} kazi near ${payload.job.location}`, text: textForFundi(payload, fundi), html: htmlForFundi(payload, fundi) })),
+    ...(payload.admin ? [{ to: payload.admin, subject: `Admin alert · new MjengoLink job ${payload.job.id}`, text: textForAdmin(payload), html: htmlForAdmin(payload) }] : []),
+  ];
+
+  const results = await Promise.allSettled(recipients.map(sendEmail));
+  const sentCount = results.filter((result) => result.status === "fulfilled" && result.value.sent).length;
+  const failures = results.filter((result) => result.status === "rejected").length;
+  return { providerConfigured: Boolean(ENV.resendApiKey && !ENV.emailFrom.includes("mjengolink.example")), recipientCount: recipients.length, sentCount, failures, adminOversight: Boolean(payload.admin) };
+}
+
+export type { JobCreatedPayload };
