@@ -4,7 +4,7 @@ import type { User as SupabaseUser } from "@supabase/supabase-js";
 import { eq } from "drizzle-orm";
 import { users } from "../../drizzle/schema";
 import { getDb } from "../db";
-import { createSupabaseClient } from "./supabase";
+import { createSupabaseAdminClient, createSupabaseClient } from "./supabase";
 import { getSessionCookieOptions } from "./cookies";
 
 export const ACCESS_TOKEN_COOKIE_NAME = "mjengolink_access_token";
@@ -82,20 +82,13 @@ export async function authenticateRequest(req: Request, res: Response) {
 export async function endSupabaseSession(req: Request, res: Response) {
   const cookies = parseCookieHeader(req.headers.cookie ?? "");
   const accessToken = cookies[ACCESS_TOKEN_COOKIE_NAME];
-  const refreshToken = cookies[REFRESH_TOKEN_COOKIE_NAME];
   try {
-    if (accessToken && refreshToken) {
-      const supabase = createSupabaseClient();
-      const { error: sessionError } = await supabase.auth.setSession({
-        access_token: accessToken,
-        refresh_token: refreshToken,
-      });
-      if (sessionError && sessionError.status !== 400 && sessionError.status !== 401 && sessionError.status !== 403) {
-        throw new Error(`Supabase sign-out failed: ${sessionError.message}`);
-      }
-      if (!sessionError) {
-        const { error } = await supabase.auth.signOut({ scope: "local" });
-        if (error) throw new Error(`Supabase sign-out failed: ${error.message}`);
+    if (accessToken) {
+      try {
+        const { error } = await createSupabaseAdminClient().auth.admin.signOut(accessToken, "local");
+        if (error) console.warn("[auth] Supabase sign-out failed", error.message);
+      } catch (error) {
+        console.warn("[auth] Supabase sign-out failed", error);
       }
     }
   } finally {

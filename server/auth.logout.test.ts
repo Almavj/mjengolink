@@ -18,6 +18,8 @@ function createAuthContext(): { ctx: TrpcContext; clearedCookies: CookieCall[] }
     authUserId: "9f1e00f0-04e6-4f4f-9f4d-593ad79020c0",
     email: "sample@example.com",
     name: "Sample User",
+    location: "Kapsoya, Eldoret",
+    avatarPath: null,
     role: "user",
     createdAt: new Date(),
     updatedAt: new Date(),

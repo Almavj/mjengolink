@@ -14,6 +14,8 @@ export const users = pgTable("users", {
   authUserId: uuid("auth_user_id").notNull().unique(),
   name: text("name"),
   email: varchar("email", { length: 320 }),
+  location: varchar("location", { length: 255 }),
+  avatarPath: text("avatar_path"),
   role: varchar("role", { length: 16 }).notNull().default("user"),
   createdAt: timestamp("createdAt", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updatedAt", { withTimezone: true }).defaultNow().notNull(),
@@ -24,7 +26,7 @@ export const workerProfiles = pgTable("worker_profiles", {
   userId: integer("userId").notNull().unique().references(() => users.id, { onDelete: "cascade" }),
   phone: varchar("phone", { length: 32 }),
   experience: text("experience"),
-  serviceArea: varchar("serviceArea", { length: 255 }).notNull().default("Eldoret"),
+  serviceArea: varchar("serviceArea", { length: 255 }).notNull(),
   availability: integer("availability").notNull().default(1),
   latitudeE6: integer("latitudeE6"),
   longitudeE6: integer("longitudeE6"),
@@ -88,7 +90,27 @@ export const reports = pgTable("reports", {
   resolvedBy: integer("resolvedBy").references(() => users.id),
 });
 
+export const conversations = pgTable("conversations", {
+  id: serial("id").primaryKey(),
+  jobId: varchar("jobId", { length: 32 }).notNull().references(() => jobs.id, { onDelete: "cascade" }),
+  clientId: integer("clientId").notNull().references(() => users.id),
+  workerId: integer("workerId").notNull().references(() => workerProfiles.id, { onDelete: "cascade" }),
+  createdAt: timestamp("createdAt", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt", { withTimezone: true }).defaultNow().notNull(),
+}, table => [unique("conversations_job_worker_unique").on(table.jobId, table.workerId)]);
+
+export const messages = pgTable("messages", {
+  id: serial("id").primaryKey(),
+  conversationId: integer("conversationId").notNull().references(() => conversations.id, { onDelete: "cascade" }),
+  senderId: integer("senderId").notNull().references(() => users.id),
+  body: varchar("body", { length: 2000 }).notNull(),
+  createdAt: timestamp("createdAt", { withTimezone: true }).defaultNow().notNull(),
+  readAt: timestamp("readAt", { withTimezone: true }),
+});
+
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 export type WorkerProfile = typeof workerProfiles.$inferSelect;
 export type Job = typeof jobs.$inferSelect;
+export type Conversation = typeof conversations.$inferSelect;
+export type Message = typeof messages.$inferSelect;

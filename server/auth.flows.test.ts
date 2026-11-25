@@ -7,10 +7,11 @@ const mocks = vi.hoisted(() => ({
   signInWithPassword: vi.fn(),
   sendAuthEmail: vi.fn(),
   dbSelect: vi.fn(),
+  dbUpdate: vi.fn(),
 }));
 
 vi.mock("./db", () => ({
-  getDb: async () => ({ select: mocks.dbSelect }),
+  getDb: async () => ({ select: mocks.dbSelect, update: mocks.dbUpdate }),
 }));
 
 vi.mock("./_core/supabase", () => ({
@@ -53,11 +54,19 @@ function stubUserExists(exists: boolean) {
   });
 }
 
+function stubUserUpdate() {
+  mocks.dbUpdate.mockReturnValue({
+    set: () => ({ where: async () => undefined }),
+  });
+}
+
 describe("email-based auth flows", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.dbSelect.mockReset();
+    mocks.dbUpdate.mockReset();
     stubUserExists(true);
+    stubUserUpdate();
     vi.stubEnv("CORS_ORIGINS", "https://mjengolink.vercel.app");
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("BREVO_API_KEY", "test-key");
@@ -79,12 +88,16 @@ describe("email-based auth flows", () => {
       name: "Sample User",
       email: "SAMPLE@example.com",
       password: "a-secure-password",
+      location: "Kapsoya, Eldoret",
     })).resolves.toMatchObject({ success: true, confirmationRequired: true });
 
     expect(mocks.adminGenerateLink).toHaveBeenCalledWith(expect.objectContaining({
       type: "signup",
       email: "sample@example.com",
-      options: { data: { name: "Sample User" }, redirectTo: "https://mjengolink.vercel.app/?auth=email-confirmed" },
+      options: {
+        data: { name: "Sample User", location: "Kapsoya, Eldoret", role: "client", phone: null, trades: [] },
+        redirectTo: "https://mjengolink.vercel.app/?auth=email-confirmed",
+      },
     }));
     expect(mocks.sendAuthEmail).toHaveBeenCalledWith(expect.objectContaining({
       to: "sample@example.com",
@@ -103,6 +116,7 @@ describe("email-based auth flows", () => {
       name: "Sample User",
       email: "sample@example.com",
       password: "a-secure-password",
+      location: "Kapsoya, Eldoret",
     });
 
     expect(mocks.adminGenerateLink).toHaveBeenCalledWith(expect.objectContaining({
@@ -190,6 +204,7 @@ describe("email-based auth flows", () => {
       name: "Sample User",
       email: "sample@example.com",
       password: "a-secure-password",
+      location: "Kapsoya, Eldoret",
     })).rejects.toMatchObject({
       code: "CONFLICT",
       message: expect.stringContaining("already registered"),
@@ -207,6 +222,7 @@ describe("email-based auth flows", () => {
       name: "Sample User",
       email: "sample@example.com",
       password: "a-secure-password",
+      location: "Kapsoya, Eldoret",
     })).rejects.toMatchObject({ cause: { code: "BREVO_SENDER_NOT_CONFIGURED" } });
 
     expect(mocks.adminGenerateLink).not.toHaveBeenCalled();
@@ -220,6 +236,7 @@ describe("email-based auth flows", () => {
       name: "Sample User",
       email: "sample@example.com",
       password: "a-secure-password",
+      location: "Kapsoya, Eldoret",
     })).rejects.toMatchObject({ code: "FORBIDDEN" });
 
     expect(mocks.adminGenerateLink).not.toHaveBeenCalled();
@@ -233,6 +250,7 @@ describe("email-based auth flows", () => {
       name: "Sample User",
       email: "sample@example.com",
       password: "a-secure-password",
+      location: "Kapsoya, Eldoret",
     })).rejects.toMatchObject({
       cause: {
         name: "AuthLinkGenerationError",
