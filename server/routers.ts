@@ -18,6 +18,24 @@ const coordinates = {
   longitudeE6: z.number().int().min(-180_000_000).max(180_000_000).nullable().optional(),
 };
 
+class AuthLinkGenerationError extends Error {
+  constructor(message: string, readonly code: string) {
+    super(message);
+    this.name = "AuthLinkGenerationError";
+  }
+}
+
+async function requestAuthLink<T>(request: () => Promise<T>, purpose: "signup" | "confirmation" | "recovery") {
+  try {
+    return await request();
+  } catch {
+    throw new AuthLinkGenerationError(
+      `Supabase ${purpose} link request failed before returning a response`,
+      `SUPABASE_${purpose.toUpperCase()}_NETWORK_ERROR`,
+    );
+  }
+}
+
 function requireRole(role: string | null | undefined, allowed: string[]) {
   const normalized = role === "user" ? "client" : role;
   if (!normalized) throw new TRPCError({ code: "UNAUTHORIZED", message: "Authentication required" });
@@ -57,17 +75,22 @@ export const appRouter = router({
       password: z.string().min(8).max(128),
     })).mutation(async ({ ctx, input }) => {
       const supabase = createSupabaseAdminClient();
-      const { data, error } = await supabase.auth.admin.generateLink({
-        type: "signup",
-        email: input.email,
-        password: input.password,
-        options: { data: { name: input.name }, redirectTo: getAuthRedirectUrl(ctx.req, "email-confirmed") },
-      });
+      const { data, error } = await requestAuthLink(
+        () => supabase.auth.admin.generateLink({
+          type: "signup",
+          email: input.email,
+          password: input.password,
+          options: { data: { name: input.name }, redirectTo: getAuthRedirectUrl(ctx.req, "email-confirmed") },
+        }),
+        "signup",
+      );
       if (error) {
         throw new TRPCError({ code: "BAD_REQUEST", message: error.message });
       }
-      const actionLink = data.properties.action_link;
-      if (!actionLink) throw new Error("Supabase did not return an email confirmation link");
+      const actionLink = data?.properties?.action_link;
+      if (!actionLink) {
+        throw new AuthLinkGenerationError("Supabase did not return the expected authentication link", "SUPABASE_AUTH_LINK_MISSING");
+      }
       await sendAuthEmail({
         to: input.email,
         subject: "Confirm your MjengoLink email",
@@ -99,17 +122,22 @@ export const appRouter = router({
       email: z.string().trim().email().max(320).transform(value => value.toLowerCase()),
     })).mutation(async ({ ctx, input }) => {
       const supabase = createSupabaseAdminClient();
-      const { data, error } = await supabase.auth.admin.generateLink({
-        type: "magiclink",
-        email: input.email,
-        options: { redirectTo: getAuthRedirectUrl(ctx.req, "email-confirmed") },
-      });
+      const { data, error } = await requestAuthLink(
+        () => supabase.auth.admin.generateLink({
+          type: "magiclink",
+          email: input.email,
+          options: { redirectTo: getAuthRedirectUrl(ctx.req, "email-confirmed") },
+        }),
+        "confirmation",
+      );
       if (error) {
         if (error.code === "user_not_found") return { success: true };
         throw new TRPCError({ code: "BAD_REQUEST", message: error.message });
       }
-      const actionLink = data.properties.action_link;
-      if (!actionLink) throw new Error("Supabase did not return an email confirmation link");
+      const actionLink = data?.properties?.action_link;
+      if (!actionLink) {
+        throw new AuthLinkGenerationError("Supabase did not return the expected authentication link", "SUPABASE_AUTH_LINK_MISSING");
+      }
       await sendAuthEmail({
         to: input.email,
         subject: "Confirm your MjengoLink email",
@@ -122,17 +150,22 @@ export const appRouter = router({
       email: z.string().trim().email().max(320).transform(value => value.toLowerCase()),
     })).mutation(async ({ ctx, input }) => {
       const supabase = createSupabaseAdminClient();
-      const { data, error } = await supabase.auth.admin.generateLink({
-        type: "recovery",
-        email: input.email,
-        options: { redirectTo: getAuthRedirectUrl(ctx.req, "password-reset") },
-      });
+      const { data, error } = await requestAuthLink(
+        () => supabase.auth.admin.generateLink({
+          type: "recovery",
+          email: input.email,
+          options: { redirectTo: getAuthRedirectUrl(ctx.req, "password-reset") },
+        }),
+        "recovery",
+      );
       if (error) {
         if (error.code === "user_not_found") return { success: true };
         throw new TRPCError({ code: "BAD_REQUEST", message: error.message });
       }
-      const actionLink = data.properties.action_link;
-      if (!actionLink) throw new Error("Supabase did not return a password reset link");
+      const actionLink = data?.properties?.action_link;
+      if (!actionLink) {
+        throw new AuthLinkGenerationError("Supabase did not return the expected authentication link", "SUPABASE_AUTH_LINK_MISSING");
+      }
       await sendAuthEmail({
         to: input.email,
         subject: "Reset your MjengoLink password",

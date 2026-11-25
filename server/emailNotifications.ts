@@ -13,6 +13,13 @@ function isEmail(value: unknown): value is string {
   return typeof value === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
+class EmailDeliveryError extends Error {
+  constructor(message: string, readonly code: string) {
+    super(message);
+    this.name = "EmailDeliveryError";
+  }
+}
+
 export function escapeHtml(value: string) {
   return value.replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character] ?? character);
 }
@@ -48,14 +55,33 @@ function htmlForAdmin(payload: JobCreatedPayload) {
 }
 
 async function deliverEmail(input: { to: string; subject: string; text: string; html: string }) {
-  const response = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: { accept: "application/json", authorization: `Bearer ${ENV.resendApiKey}`, "content-type": "application/json" },
-    body: JSON.stringify({ from: ENV.emailFrom, to: [input.to], subject: input.subject, text: input.text, html: input.html, ...(ENV.emailReplyTo ? { reply_to: ENV.emailReplyTo } : {}) }),
-  });
+  let response: Response;
+  try {
+    response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { accept: "application/json", authorization: `Bearer ${ENV.resendApiKey}`, "content-type": "application/json" },
+      body: JSON.stringify({ from: ENV.emailFrom, to: [input.to], subject: input.subject, text: input.text, html: input.html, ...(ENV.emailReplyTo ? { reply_to: ENV.emailReplyTo } : {}) }),
+    });
+  } catch {
+    throw new EmailDeliveryError("Resend request failed before receiving a response", "RESEND_NETWORK_ERROR");
+  }
   if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    throw new Error(`Email delivery failed with status ${response.status}${detail ? `: ${detail}` : ""}`);
+    let providerCode: string | undefined;
+    try {
+      const body: unknown = await response.json();
+      if (body && typeof body === "object") {
+        const name = "name" in body && typeof body.name === "string" ? body.name : undefined;
+        const code = "code" in body && typeof body.code === "string" ? body.code : undefined;
+        const candidate = name ?? code;
+        if (candidate && /^[a-z0-9_-]{1,64}$/i.test(candidate)) {
+          providerCode = candidate.toUpperCase().replaceAll("-", "_");
+        }
+      }
+    } catch {
+      // The HTTP status remains useful when the provider response isn't JSON.
+    }
+    const code = providerCode ? `RESEND_${providerCode}` : `RESEND_HTTP_${response.status}`;
+    throw new EmailDeliveryError(`Resend rejected the email request with HTTP ${response.status}`, code);
   }
 }
 
@@ -68,11 +94,15 @@ async function sendEmail(input: { to: Recipient; subject: string; text: string; 
 }
 
 export async function sendAuthEmail(input: { to: string; subject: string; text: string; html: string }) {
-  if (!ENV.resendApiKey) throw new Error("RESEND_API_KEY must be configured to send authentication emails");
-  if (ENV.emailFrom.includes("your-verified-domain.example") || ENV.emailFrom.includes("mjengolink.example")) {
-    throw new Error("EMAIL_FROM must use a verified sender address");
+  if (!ENV.resendApiKey) {
+    throw new EmailDeliveryError("RESEND_API_KEY is missing from the backend environment", "RESEND_API_KEY_MISSING");
   }
-  if (!isEmail(input.to)) throw new Error("Invalid authentication email recipient");
+  if (ENV.emailFrom.includes("your-verified-domain.example") || ENV.emailFrom.includes("mjengolink.example")) {
+    throw new EmailDeliveryError("EMAIL_FROM must use a verified sender address", "RESEND_SENDER_NOT_CONFIGURED");
+  }
+  if (!isEmail(input.to)) {
+    throw new EmailDeliveryError("The authentication email recipient is invalid", "AUTH_EMAIL_RECIPIENT_INVALID");
+  }
 
   await deliverEmail(input);
 }
