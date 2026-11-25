@@ -11,7 +11,7 @@ const t = initTRPC.context<TrpcContext>().create({
     const code = cause && typeof cause === "object" && "code" in cause && typeof cause.code === "string"
       ? cause.code
       : undefined;
-    const message = code?.startsWith("RESEND_")
+    const message = code?.startsWith("BREVO_")
       ? "We couldn't send the email right now. Please try again later."
       : code?.startsWith("SUPABASE_")
         ? "We couldn't start the authentication flow. Please try again later."

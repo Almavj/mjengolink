@@ -43,7 +43,7 @@ describe("email-based auth flows", () => {
     vi.clearAllMocks();
     vi.stubEnv("CORS_ORIGINS", "https://mjengolink.vercel.app");
     vi.stubEnv("NODE_ENV", "production");
-    vi.stubEnv("RESEND_API_KEY", "test-key");
+    vi.stubEnv("BREVO_API_KEY", "test-key");
     vi.stubEnv("EMAIL_FROM", "MjengoLink <notifications@example.com>");
   });
 
@@ -51,7 +51,7 @@ describe("email-based auth flows", () => {
     vi.unstubAllEnvs();
   });
 
-  it("sends a Supabase-generated signup link through Resend", async () => {
+  it("sends a Supabase-generated signup link through Brevo", async () => {
     mocks.adminGenerateLink.mockResolvedValue({
       data: { properties: { action_link: "https://auth.example/confirm?token=signup" } },
       error: null,
@@ -86,7 +86,7 @@ describe("email-based auth flows", () => {
       .rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 
-  it("sends recovery links through Resend and does not reveal unknown email addresses", async () => {
+  it("sends recovery links through Brevo and does not reveal unknown email addresses", async () => {
     mocks.adminGenerateLink.mockResolvedValue({
       data: { properties: { action_link: "https://auth.example/recover?token=reset" } },
       error: null,
@@ -131,7 +131,7 @@ describe("email-based auth flows", () => {
   });
 
   it("rejects a misconfigured sender before creating a Supabase user", async () => {
-    vi.stubEnv("RESEND_API_KEY", "test-key");
+    vi.stubEnv("BREVO_API_KEY", "test-key");
     vi.stubEnv("EMAIL_FROM", "mjengolink");
     const caller = appRouter.createCaller(createContext());
 
@@ -139,7 +139,7 @@ describe("email-based auth flows", () => {
       name: "Sample User",
       email: "sample@example.com",
       password: "a-secure-password",
-    })).rejects.toMatchObject({ cause: { code: "RESEND_SENDER_NOT_CONFIGURED" } });
+    })).rejects.toMatchObject({ cause: { code: "BREVO_SENDER_NOT_CONFIGURED" } });
 
     expect(mocks.adminGenerateLink).not.toHaveBeenCalled();
     expect(mocks.sendAuthEmail).not.toHaveBeenCalled();

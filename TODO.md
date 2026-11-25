@@ -31,7 +31,7 @@
 - [x] The system models three roles: client, fundi, and admin, with separate responsibilities.
 - [x] A new job sends one client confirmation, alerts only available fundis with a matching trade, and sends one admin oversight alert.
 - [x] The server exposes `POST /api/notifications/job-created` and safely reports provider setup status.
-- [x] Resend delivery is supported through server-side `RESEND_API_KEY`, `EMAIL_FROM`, and optional `EMAIL_REPLY_TO` settings.
+- [x] Brevo delivery is supported through server-side `BREVO_API_KEY`, `EMAIL_FROM`, and optional `EMAIL_REPLY_TO` settings.
 
 ## Persistence and delivery
 - [x] Supabase Auth accounts and application roles are linked to Supabase PostgreSQL fundi profiles, skills, jobs, responses, ratings/comments and reports.
@@ -41,4 +41,4 @@
 - [x] TypeScript diagnostics and production build pass.
 
 ## Remaining pilot boundary
-The proposal explicitly excludes payments/escrow, automated identity-document verification, insurance, formal trade certification, dispute adjudication, payroll, contractor tendering and government employment-database integration; these remain out of scope. Richer notification preferences can be added as a later increment. Real email delivery requires a verified sender domain, a configured Resend API key, and a real `EMAIL_FROM` value; the placeholder sender is intentionally treated as unconfigured.
+The proposal explicitly excludes payments/escrow, automated identity-document verification, insurance, formal trade certification, dispute adjudication, payroll, contractor tendering and government employment-database integration; these remain out of scope. Richer notification preferences can be added as a later increment. Real email delivery requires a verified sender address or domain, a configured Brevo API key, and a real `EMAIL_FROM` value; the placeholder sender is intentionally treated as unconfigured.

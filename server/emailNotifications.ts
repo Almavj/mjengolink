@@ -13,6 +13,14 @@ function isEmail(value: unknown): value is string {
   return typeof value === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
+function parseSender(value: string) {
+  const match = value.trim().match(/^(?:(.+?)\s*)?<\s*([^<>]+?)\s*>$/);
+  return {
+    name: match?.[1]?.trim() || "MjengoLink",
+    email: (match?.[2] ?? value).trim(),
+  };
+}
+
 class EmailDeliveryError extends Error {
   constructor(message: string, readonly code: string) {
     super(message);
@@ -56,15 +64,23 @@ function htmlForAdmin(payload: JobCreatedPayload) {
 
 async function deliverEmail(input: { to: string; subject: string; text: string; html: string }) {
   let response: Response;
+  const sender = parseSender(ENV.emailFrom);
   const replyTo = ENV.emailReplyTo.trim();
   try {
-    response = await fetch("https://api.resend.com/emails", {
+    response = await fetch("https://api.brevo.com/v3/smtp/email", {
       method: "POST",
-      headers: { accept: "application/json", authorization: `Bearer ${ENV.resendApiKey}`, "content-type": "application/json" },
-      body: JSON.stringify({ from: ENV.emailFrom, to: [input.to], subject: input.subject, text: input.text, html: input.html, ...(replyTo && isEmail(replyTo) ? { reply_to: replyTo } : {}) }),
+      headers: { accept: "application/json", "api-key": ENV.brevoApiKey, "content-type": "application/json" },
+      body: JSON.stringify({
+        sender,
+        to: [{ email: input.to }],
+        subject: input.subject,
+        textContent: input.text,
+        htmlContent: input.html,
+        ...(replyTo && isEmail(replyTo) ? { replyTo: { email: replyTo } } : {}),
+      }),
     });
   } catch {
-    throw new EmailDeliveryError("Resend request failed before receiving a response", "RESEND_NETWORK_ERROR");
+    throw new EmailDeliveryError("Brevo request failed before receiving a response", "BREVO_NETWORK_ERROR");
   }
   if (!response.ok) {
     let providerCode: string | undefined;
@@ -72,16 +88,15 @@ async function deliverEmail(input: { to: string; subject: string; text: string; 
     try {
       const body: unknown = await response.json();
       if (body && typeof body === "object") {
-        const name = "name" in body && typeof body.name === "string" ? body.name : undefined;
-        const code = "code" in body && typeof body.code === "string" ? body.code : undefined;
-        const candidate = name ?? code;
-        if (candidate && /^[a-z0-9_-]{1,64}$/i.test(candidate)) {
-          providerCode = candidate.toUpperCase().replaceAll("-", "_");
+        const code = "code" in body && (typeof body.code === "string" || typeof body.code === "number") ? String(body.code) : undefined;
+        if (code && /^[a-z0-9_-]{1,64}$/i.test(code)) {
+          providerCode = code.toUpperCase().replaceAll("-", "_");
         }
         if ("message" in body && typeof body.message === "string") providerDetail = body.message;
-        if ("errors" in body && Array.isArray(body.errors)) {
-          const errors = body.errors
-            .map((error: unknown) => error && typeof error === "object" && "message" in error && typeof error.message === "string" ? error.message : undefined)
+        if ("errors" in body && body.errors && typeof body.errors === "object") {
+          const errors = Object.values(body.errors)
+            .flat()
+            .map((error: unknown) => typeof error === "string" ? error : undefined)
             .filter((message): message is string => Boolean(message));
           if (errors.length) providerDetail = [providerDetail, ...errors].filter(Boolean).join("; ");
         }
@@ -89,14 +104,14 @@ async function deliverEmail(input: { to: string; subject: string; text: string; 
     } catch {
       // The HTTP status remains useful when the provider response isn't JSON.
     }
-    const code = providerCode ? `RESEND_${providerCode}` : `RESEND_HTTP_${response.status}`;
+    const code = providerCode ? `BREVO_${providerCode}` : `BREVO_HTTP_${response.status}`;
     const suffix = providerDetail ? `: ${providerDetail}` : "";
-    throw new EmailDeliveryError(`Resend rejected the email request with HTTP ${response.status}${suffix}`, code);
+    throw new EmailDeliveryError(`Brevo rejected the email request with HTTP ${response.status}${suffix}`, code);
   }
 }
 
 async function sendEmail(input: { to: Recipient; subject: string; text: string; html: string }) {
-  if (!ENV.resendApiKey || ENV.emailFrom.includes("mjengolink.example")) return { sent: false, reason: "provider_not_configured" as const };
+  if (!ENV.brevoApiKey || ENV.emailFrom.includes("mjengolink.example")) return { sent: false, reason: "provider_not_configured" as const };
   if (!isEmail(input.to.email)) return { sent: false, reason: "invalid_recipient" as const };
 
   await deliverEmail({ ...input, to: input.to.email });
@@ -104,15 +119,15 @@ async function sendEmail(input: { to: Recipient; subject: string; text: string; 
 }
 
 export function assertAuthEmailConfigured(to: string) {
-  if (!ENV.resendApiKey) {
-    throw new EmailDeliveryError("RESEND_API_KEY is missing from the backend environment", "RESEND_API_KEY_MISSING");
+  if (!ENV.brevoApiKey) {
+    throw new EmailDeliveryError("BREVO_API_KEY is missing from the backend environment", "BREVO_API_KEY_MISSING");
   }
   if (ENV.emailFrom.includes("your-verified-domain.example") || ENV.emailFrom.includes("mjengolink.example")) {
-    throw new EmailDeliveryError("EMAIL_FROM must use a verified sender address", "RESEND_SENDER_NOT_CONFIGURED");
+    throw new EmailDeliveryError("EMAIL_FROM must use a verified sender address", "BREVO_SENDER_NOT_CONFIGURED");
   }
-  const senderAddress = ENV.emailFrom.match(/<([^<>]+)>/)?.[1] ?? ENV.emailFrom;
+  const senderAddress = parseSender(ENV.emailFrom).email;
   if (!isEmail(senderAddress)) {
-    throw new EmailDeliveryError("EMAIL_FROM must be an address or a 'Name <address>' sender", "RESEND_SENDER_NOT_CONFIGURED");
+    throw new EmailDeliveryError("EMAIL_FROM must be an address or a 'Name <address>' sender", "BREVO_SENDER_NOT_CONFIGURED");
   }
   if (!isEmail(to)) {
     throw new EmailDeliveryError("The authentication email recipient is invalid", "AUTH_EMAIL_RECIPIENT_INVALID");
@@ -134,7 +149,7 @@ export async function notifyJobCreated(payload: JobCreatedPayload) {
   const results = await Promise.allSettled(recipients.map(sendEmail));
   const sentCount = results.filter((result) => result.status === "fulfilled" && result.value.sent).length;
   const failures = results.filter((result) => result.status === "rejected").length;
-  return { providerConfigured: Boolean(ENV.resendApiKey && !ENV.emailFrom.includes("mjengolink.example")), recipientCount: recipients.length, sentCount, failures, adminOversight: Boolean(payload.admin) };
+  return { providerConfigured: Boolean(ENV.brevoApiKey && !ENV.emailFrom.includes("mjengolink.example")), recipientCount: recipients.length, sentCount, failures, adminOversight: Boolean(payload.admin) };
 }
 
 export type { JobCreatedPayload };

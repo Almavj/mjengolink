@@ -16,12 +16,12 @@ The app is implemented as a React/Vite client inside the Express/tRPC/Drizzle pr
 - Approximate location matching: trade + availability filtering, configurable job radius, Haversine distance when coordinates are available, and manual estate/landmark fallback.
 
 ## Role and notification logic
-The app has three roles, not three separate apps. A client creates and manages demand; a fundi supplies trade skills and responds to suitable work; an admin oversees moderation and pilot health. A new job is never emailed to every user. The client receives one confirmation, active fundis receive an alert only when a selected trade matches, and the admin receives a lightweight oversight alert. The server endpoint is provider-neutral at the application boundary and uses Resend when `RESEND_API_KEY` and a verified `EMAIL_FROM` are configured. Preview safely returns `providerConfigured: false` without claiming delivery.
+The app has three roles, not three separate apps. A client creates and manages demand; a fundi supplies trade skills and responds to suitable work; an admin oversees moderation and pilot health. A new job is never emailed to every user. The client receives one confirmation, active fundis receive an alert only when a selected trade matches, and the admin receives a lightweight oversight alert. The server endpoint is provider-neutral at the application boundary and uses Brevo when `BREVO_API_KEY` and a verified `EMAIL_FROM` are configured. Preview safely returns `providerConfigured: false` without claiming delivery.
 
 ## Project structure
 - `client/src/pages/Home.tsx`: authenticated application shell, role onboarding, dashboard views and mutation-backed interactions.
 - `client/src/index.css`: brand tokens, responsive layout, Kenyan visual language, component styling.
-- `server/emailNotifications.ts`: server-side email templates, recipient fan-out, and Resend adapter.
+- `server/emailNotifications.ts`: server-side email templates, recipient fan-out, and Brevo adapter.
 - `server/_core/index.ts`: `/api/notifications/job-created` endpoint.
 - `NOTIFICATIONS.md`: role rationale, routing rules, and production notes.
 - `plan.md`: implementation and design decisions.
@@ -79,4 +79,4 @@ The mark is a paired brick-and-link monogram: two offset terracotta blocks conne
 `#0B5D43` — Mjengo Green.
 
 ## Runtime and persistence
-The authenticated UI reads dashboard records from the managed database through tRPC. Seeded records remain only as an in-memory loading presentation fallback and are never written as user data. The app exposes `/` and `/404`; the default server command remains `pnpm dev` on port 3000. Real email delivery still requires a verified sender domain and Resend configuration.
+The authenticated UI reads dashboard records from the managed database through tRPC. Seeded records remain only as an in-memory loading presentation fallback and are never written as user data. The app exposes `/` and `/404`; the default server command remains `pnpm dev` on port 3000. Real email delivery still requires a verified sender address or domain and Brevo configuration.
