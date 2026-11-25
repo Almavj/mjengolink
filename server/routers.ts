@@ -4,12 +4,12 @@ import { z } from "zod";
 import { getDb } from "./db";
 import { jobs, jobResponses, ratings, reports, users, workerProfiles, workerSkills } from "../drizzle/schema";
 import { createJobId, createReportId, findMatchingFundis, getDashboardData, getWorkerProfile, isJobClient, JOB_STATUSES, PILOT_TRADES } from "./mjengo";
-import { notifyJobCreated } from "./emailNotifications";
+import { escapeHtml, notifyJobCreated, sendAuthEmail } from "./emailNotifications";
 import { adminProcedure, protectedProcedure, publicProcedure, router } from "./_core/trpc";
 import { systemRouter } from "./_core/systemRouter";
 import { endSupabaseSession, setSessionCookies } from "./_core/auth";
-import { createSupabaseClient } from "./_core/supabase";
-import { CONFIRMATION_EMAIL_COOLDOWN_MSG } from "@shared/const";
+import { createSupabaseAdminClient, createSupabaseClient } from "./_core/supabase";
+import type { TrpcContext } from "./_core/context";
 
 const tradeSchema = z.enum(PILOT_TRADES);
 const statusSchema = z.enum(JOB_STATUSES);
@@ -31,6 +31,22 @@ function money(value: string) {
   return Math.round(amount);
 }
 
+function getAuthRedirectUrl(req: TrpcContext["req"], authAction: "email-confirmed" | "password-reset") {
+  const origin = req.get("origin");
+  const allowedOrigins = [
+    ...(process.env.CORS_ORIGINS ?? "").split(",").map(value => value.trim()).filter(Boolean),
+    ...(process.env.NODE_ENV === "development"
+      ? ["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:5173", "http://127.0.0.1:5173"]
+      : []),
+  ];
+  if (!origin || !allowedOrigins.includes(origin)) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "This site is not allowed to start an authentication flow" });
+  }
+  const redirectUrl = new URL("/", origin);
+  redirectUrl.searchParams.set("auth", authAction);
+  return redirectUrl.toString();
+}
+
 export const appRouter = router({
   system: systemRouter,
   auth: router({
@@ -40,20 +56,25 @@ export const appRouter = router({
       email: z.string().trim().email().max(320).transform(value => value.toLowerCase()),
       password: z.string().min(8).max(128),
     })).mutation(async ({ ctx, input }) => {
-      const supabase = createSupabaseClient();
-      const { data, error } = await supabase.auth.signUp({
+      const supabase = createSupabaseAdminClient();
+      const { data, error } = await supabase.auth.admin.generateLink({
+        type: "signup",
         email: input.email,
         password: input.password,
-        options: { data: { name: input.name } },
+        options: { data: { name: input.name }, redirectTo: getAuthRedirectUrl(ctx.req, "email-confirmed") },
       });
       if (error) {
-        if (error.status === 429 || error.code === "over_email_send_rate_limit" || error.message.includes("For security purposes")) {
-          throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: CONFIRMATION_EMAIL_COOLDOWN_MSG });
-        }
         throw new TRPCError({ code: "BAD_REQUEST", message: error.message });
       }
-      if (data.session) setSessionCookies(ctx.req, ctx.res, data.session);
-      return { success: true, confirmationRequired: !data.session };
+      const actionLink = data.properties.action_link;
+      if (!actionLink) throw new Error("Supabase did not return an email confirmation link");
+      await sendAuthEmail({
+        to: input.email,
+        subject: "Confirm your MjengoLink email",
+        text: `Hi ${input.name},\n\nConfirm your email address to activate your MjengoLink account:\n${actionLink}\n\nIf you did not create this account, you can ignore this email.`,
+        html: `<div style="font-family:Arial,sans-serif;line-height:1.6;color:#1d2925"><p>Hi ${escapeHtml(input.name)},</p><p>Confirm your email address to activate your MjengoLink account.</p><p><a href="${escapeHtml(actionLink)}" style="display:inline-block;padding:12px 18px;background:#0b5d43;color:#fff;text-decoration:none">Confirm email</a></p><p>If you did not create this account, you can ignore this email.</p></div>`,
+      });
+      return { success: true, confirmationRequired: true };
     }),
     login: publicProcedure.input(z.object({
       email: z.string().trim().email().max(320).transform(value => value.toLowerCase()),
@@ -64,11 +85,79 @@ export const appRouter = router({
         email: input.email,
         password: input.password,
       });
+      if (error?.code === "email_not_confirmed" || (data.user && !data.user.email_confirmed_at)) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Confirm your email address before signing in. Check your inbox for the confirmation link." });
+      }
       if (error || !data.session || !data.user) {
         throw new TRPCError({ code: "UNAUTHORIZED", message: "Invalid email or password" });
       }
 
       setSessionCookies(ctx.req, ctx.res, data.session);
+      return { success: true };
+    }),
+    resendConfirmation: publicProcedure.input(z.object({
+      email: z.string().trim().email().max(320).transform(value => value.toLowerCase()),
+    })).mutation(async ({ ctx, input }) => {
+      const supabase = createSupabaseAdminClient();
+      const { data, error } = await supabase.auth.admin.generateLink({
+        type: "magiclink",
+        email: input.email,
+        options: { redirectTo: getAuthRedirectUrl(ctx.req, "email-confirmed") },
+      });
+      if (error) {
+        if (error.code === "user_not_found") return { success: true };
+        throw new TRPCError({ code: "BAD_REQUEST", message: error.message });
+      }
+      const actionLink = data.properties.action_link;
+      if (!actionLink) throw new Error("Supabase did not return an email confirmation link");
+      await sendAuthEmail({
+        to: input.email,
+        subject: "Confirm your MjengoLink email",
+        text: `Confirm your email address to continue using MjengoLink:\n${actionLink}\n\nIf you did not request this email, you can ignore it.`,
+        html: `<div style="font-family:Arial,sans-serif;line-height:1.6;color:#1d2925"><p>Confirm your email address to continue using MjengoLink.</p><p><a href="${escapeHtml(actionLink)}" style="display:inline-block;padding:12px 18px;background:#0b5d43;color:#fff;text-decoration:none">Confirm email</a></p><p>If you did not request this email, you can ignore it.</p></div>`,
+      });
+      return { success: true };
+    }),
+    requestPasswordReset: publicProcedure.input(z.object({
+      email: z.string().trim().email().max(320).transform(value => value.toLowerCase()),
+    })).mutation(async ({ ctx, input }) => {
+      const supabase = createSupabaseAdminClient();
+      const { data, error } = await supabase.auth.admin.generateLink({
+        type: "recovery",
+        email: input.email,
+        options: { redirectTo: getAuthRedirectUrl(ctx.req, "password-reset") },
+      });
+      if (error) {
+        if (error.code === "user_not_found") return { success: true };
+        throw new TRPCError({ code: "BAD_REQUEST", message: error.message });
+      }
+      const actionLink = data.properties.action_link;
+      if (!actionLink) throw new Error("Supabase did not return a password reset link");
+      await sendAuthEmail({
+        to: input.email,
+        subject: "Reset your MjengoLink password",
+        text: `Use this secure link to reset your MjengoLink password:\n${actionLink}\n\nIf you did not request a password reset, you can ignore this email.`,
+        html: `<div style="font-family:Arial,sans-serif;line-height:1.6;color:#1d2925"><p>Use this secure link to reset your MjengoLink password.</p><p><a href="${escapeHtml(actionLink)}" style="display:inline-block;padding:12px 18px;background:#0b5d43;color:#fff;text-decoration:none">Reset password</a></p><p>If you did not request a password reset, you can ignore this email.</p></div>`,
+      });
+      return { success: true };
+    }),
+    updatePassword: publicProcedure.input(z.object({
+      accessToken: z.string().min(1).max(4096),
+      refreshToken: z.string().min(1).max(4096),
+      password: z.string().min(8).max(128),
+    })).mutation(async ({ input }) => {
+      const supabase = createSupabaseClient();
+      const { error: sessionError } = await supabase.auth.setSession({
+        access_token: input.accessToken,
+        refresh_token: input.refreshToken,
+      });
+      if (sessionError) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "This password reset link is invalid or expired. Request a new one." });
+      }
+      const { error } = await supabase.auth.updateUser({ password: input.password });
+      if (error) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: error.message });
+      }
       return { success: true };
     }),
     setRole: protectedProcedure.input(z.object({ role: z.enum(["client", "fundi"]) })).mutation(async ({ ctx, input }) => {

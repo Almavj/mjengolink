@@ -11,6 +11,7 @@ import {
   ClipboardList,
   Clock3,
   Eye,
+  EyeOff,
   FileText,
   Flag,
   Hammer,
@@ -39,7 +40,6 @@ import {
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { trpc } from "@/lib/trpc";
-import { CONFIRMATION_EMAIL_COOLDOWN_MSG } from "@shared/const";
 
 type Role = "client" | "fundi" | "admin";
 type NavKey = "overview" | "jobs" | "fundis" | "history" | "responses" | "profile" | "reports";
@@ -394,13 +394,49 @@ function LoginForm() {
   const utils = trpc.useUtils();
   const loginMutation = trpc.auth.login.useMutation();
   const registerMutation = trpc.auth.register.useMutation();
-  const [mode, setMode] = useState<"login" | "register">("login");
+  const resendConfirmationMutation = trpc.auth.resendConfirmation.useMutation();
+  const requestPasswordResetMutation = trpc.auth.requestPasswordReset.useMutation();
+  const updatePasswordMutation = trpc.auth.updatePassword.useMutation();
+  const [mode, setMode] = useState<"login" | "register" | "forgot" | "reset">("login");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [passwordConfirmation, setPasswordConfirmation] = useState("");
+  const [passwordVisible, setPasswordVisible] = useState(false);
+  const [recoveryTokens, setRecoveryTokens] = useState<{ accessToken: string; refreshToken: string } | null>(null);
+  const [confirmationPending, setConfirmationPending] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
-  const isPending = loginMutation.isPending || registerMutation.isPending;
+  const isPending = loginMutation.isPending || registerMutation.isPending || resendConfirmationMutation.isPending || requestPasswordResetMutation.isPending || updatePasswordMutation.isPending;
+
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const hash = new URLSearchParams(url.hash.replace(/^#/, ""));
+    const type = hash.get("type");
+    const accessToken = hash.get("access_token");
+    const refreshToken = hash.get("refresh_token");
+    const emailError = hash.get("error_description") ?? url.searchParams.get("error_description");
+
+    if (emailError) {
+      setError("That email link is invalid or expired. Request a new one and try again.");
+    } else if (type === "recovery" || url.searchParams.get("auth") === "password-reset") {
+      if (accessToken && refreshToken) {
+        setRecoveryTokens({ accessToken, refreshToken });
+        setMode("reset");
+        setMessage("");
+      } else {
+        setError("That password reset link is invalid or expired. Request a new one and try again.");
+      }
+    } else if (type === "signup" || type === "magiclink" || url.searchParams.get("auth") === "email-confirmed") {
+      setMode("login");
+      setMessage("Your email is confirmed. You can now sign in.");
+      setConfirmationPending(false);
+    }
+
+    if (url.hash || url.searchParams.has("auth") || url.searchParams.has("error_description")) {
+      window.history.replaceState(null, "", url.pathname);
+    }
+  }, []);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -408,35 +444,74 @@ function LoginForm() {
     setMessage("");
     try {
       if (mode === "register") {
+        if (password !== passwordConfirmation) {
+          setError("The passwords do not match.");
+          return;
+        }
         const result = await registerMutation.mutateAsync({ name, email, password });
         if (result.confirmationRequired) {
           setMode("login");
           setPassword("");
-          setMessage("Check your inbox and spam folder for a confirmation email. Once confirmed, sign in. If it hasn't arrived, wait 60 seconds before trying again.");
+          setPasswordConfirmation("");
+          setConfirmationPending(true);
+          setMessage("Check your inbox and spam folder for a confirmation email. Confirm your email before signing in.");
           return;
         }
+      } else if (mode === "forgot") {
+        await requestPasswordResetMutation.mutateAsync({ email });
+        setMode("login");
+        setMessage("If an account exists for that email, we sent a password reset link.");
+        return;
+      } else if (mode === "reset") {
+        if (password !== passwordConfirmation) {
+          setError("The passwords do not match.");
+          return;
+        }
+        if (!recoveryTokens) {
+          setError("That password reset link is invalid or expired. Request a new one and try again.");
+          return;
+        }
+        await updatePasswordMutation.mutateAsync({ ...recoveryTokens, password });
+        setRecoveryTokens(null);
+        setMode("login");
+        setPassword("");
+        setPasswordConfirmation("");
+        setMessage("Your password has been updated. Sign in with your new password.");
+        return;
       } else {
         await loginMutation.mutateAsync({ email, password });
       }
       await utils.auth.me.invalidate();
     } catch (cause) {
-      if (cause instanceof Error && cause.message === CONFIRMATION_EMAIL_COOLDOWN_MSG) {
-        setMode("login");
-        setPassword("");
-        setMessage(CONFIRMATION_EMAIL_COOLDOWN_MSG);
-        return;
-      }
       setError(cause instanceof Error ? cause.message : "Unable to sign in. Please try again.");
+      if (cause instanceof Error && cause.message.includes("Confirm your email address")) {
+        setConfirmationPending(true);
+      }
     }
   };
+
+  const title = mode === "login"
+    ? "Build with trusted hands nearby."
+    : mode === "register"
+      ? "Create your MjengoLink account."
+      : mode === "forgot"
+        ? "Reset your password."
+        : "Choose a new password.";
+  const description = mode === "login"
+    ? "Sign in to manage jobs, discover fundis and keep your work history in one place."
+    : mode === "register"
+      ? "Join MjengoLink to post jobs or find construction work near you."
+      : mode === "forgot"
+        ? "Enter your account email and we’ll send a secure reset link if it matches an account."
+        : "Use at least 8 characters for your new password.";
 
   return (
     <AuthFrame>
       <div className="auth-card">
         <BrandMark />
         <div className="eyebrow"><span className="eyebrow-line" />WELCOME TO MJENGOLINK</div>
-        <h1>{mode === "login" ? "Build with trusted hands nearby." : "Create your MjengoLink account."}</h1>
-        <p>{mode === "login" ? "Sign in to manage jobs, discover fundis and keep your work history in one place." : "Join MjengoLink to post jobs or find construction work near you."}</p>
+        <h1>{title}</h1>
+        <p>{description}</p>
         <form className="auth-form" onSubmit={submit}>
           {mode === "register" && (
             <label>
@@ -444,27 +519,69 @@ function LoginForm() {
               <input autoComplete="name" maxLength={120} minLength={2} onChange={event => setName(event.target.value)} required value={name} />
             </label>
           )}
-          <label>
-            Email address
-            <input autoComplete="email" onChange={event => setEmail(event.target.value)} required type="email" value={email} />
-          </label>
-          <label>
-            Password
-            <input autoComplete={mode === "login" ? "current-password" : "new-password"} maxLength={128} minLength={mode === "register" ? 8 : 1} onChange={event => setPassword(event.target.value)} required type="password" value={password} />
-            {mode === "register" && <small>Use at least 8 characters.</small>}
-          </label>
+          {mode !== "reset" && (
+            <label>
+              Email address
+              <input autoComplete="email" onChange={event => setEmail(event.target.value)} required type="email" value={email} />
+            </label>
+          )}
+          {(mode === "login" || mode === "register" || mode === "reset") && (
+            <label>
+              {mode === "reset" ? "New password" : "Password"}
+              <span className="auth-password-field">
+                <input autoComplete={mode === "login" ? "current-password" : "new-password"} maxLength={128} minLength={mode === "login" ? 1 : 8} onChange={event => setPassword(event.target.value)} required type={passwordVisible ? "text" : "password"} value={password} />
+                <button aria-label={passwordVisible ? "Hide password" : "Show password"} aria-pressed={passwordVisible} className="auth-password-toggle" onClick={() => setPasswordVisible(value => !value)} type="button">
+                  {passwordVisible ? <EyeOff size={17} /> : <Eye size={17} />}
+                </button>
+              </span>
+              {(mode === "register" || mode === "reset") && <small>Use at least 8 characters.</small>}
+            </label>
+          )}
+          {(mode === "register" || mode === "reset") && (
+            <label>
+              Confirm password
+              <span className="auth-password-field">
+                <input autoComplete="new-password" maxLength={128} minLength={8} onChange={event => setPasswordConfirmation(event.target.value)} required type={passwordVisible ? "text" : "password"} value={passwordConfirmation} />
+                <button aria-label={passwordVisible ? "Hide password" : "Show password"} aria-pressed={passwordVisible} className="auth-password-toggle" onClick={() => setPasswordVisible(value => !value)} type="button">
+                  {passwordVisible ? <EyeOff size={17} /> : <Eye size={17} />}
+                </button>
+              </span>
+            </label>
+          )}
+          {mode === "login" && <button className="auth-inline-link" onClick={() => { setMode("forgot"); setError(""); setMessage(""); }} type="button">Forgot password?</button>}
           <button className="primary-button auth-cta" disabled={isPending} type="submit">
-            {isPending ? "Please wait…" : mode === "login" ? "Sign in" : "Create account"}
+            {isPending ? "Please wait…" : mode === "login" ? "Sign in" : mode === "register" ? "Create account" : mode === "forgot" ? "Send reset link" : "Update password"}
           </button>
         </form>
         {error && <div className="auth-error" role="alert">{error}</div>}
         {message && <p role="status">{message}</p>}
-        <div className="auth-switch">
-          {mode === "login" ? "New to MjengoLink?" : "Already have an account?"}
-          <button type="button" onClick={() => { setMode(mode === "login" ? "register" : "login"); setError(""); setMessage(""); }}>
-            {mode === "login" ? "Create an account" : "Sign in"}
+        {confirmationPending && mode === "login" && (
+          <button className="auth-inline-link" disabled={resendConfirmationMutation.isPending || !email} onClick={async () => {
+            setError("");
+            try {
+              await resendConfirmationMutation.mutateAsync({ email });
+              setMessage("If that account still needs confirmation, a new email has been sent.");
+            } catch (cause) {
+              setError(cause instanceof Error ? cause.message : "Unable to send a confirmation email.");
+            }
+          }} type="button">
+            {resendConfirmationMutation.isPending ? "Sending…" : "Resend confirmation email"}
           </button>
-        </div>
+        )}
+        {mode === "login" || mode === "register" ? (
+          <div className="auth-switch">
+            {mode === "login" ? "New to MjengoLink?" : "Already have an account?"}
+            <button type="button" onClick={() => { setMode(mode === "login" ? "register" : "login"); setError(""); setMessage(""); setConfirmationPending(false); }}>
+              {mode === "login" ? "Create an account" : "Sign in"}
+            </button>
+          </div>
+        ) : (
+          <div className="auth-switch">
+            <button type="button" onClick={() => { setMode("login"); setError(""); setMessage(""); }}>
+              Back to sign in
+            </button>
+          </div>
+        )}
       </div>
     </AuthFrame>
   );

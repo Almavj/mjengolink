@@ -105,6 +105,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .auth-form label { display: grid; gap: 7px; color: var(--green-dark); font-size: 13px; font-weight: 650; }
 .auth-form input { width: 100%; min-height: 44px; padding: 10px 12px; color: var(--ink); background: white; border: 1px solid var(--line); border-radius: 2px; font: inherit; }
 .auth-form input:focus { outline: 2px solid var(--green); outline-offset: 1px; }
+.auth-password-field { position: relative; display: block; }
+.auth-password-field input { padding-right: 46px; }
+.auth-password-toggle { position: absolute; top: 50%; right: 6px; display: grid; width: 34px; height: 34px; place-items: center; transform: translateY(-50%); color: var(--muted); background: transparent; border: 0; cursor: pointer; }
+.auth-password-toggle:hover { color: var(--green-dark); }
+.auth-inline-link { justify-self: start; padding: 0; color: var(--green-dark); background: none; border: 0; font: inherit; font-size: 13px; font-weight: 700; text-decoration: underline; cursor: pointer; }
+.auth-inline-link:disabled { opacity: .6; cursor: wait; }
 .auth-form small { color: var(--muted); font-size: 12px; font-weight: 400; }
 .auth-form .auth-cta:disabled { opacity: .65; cursor: wait; }
 .auth-loading { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; }

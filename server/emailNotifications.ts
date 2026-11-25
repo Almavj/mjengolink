@@ -13,7 +13,7 @@ function isEmail(value: unknown): value is string {
   return typeof value === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
-function escapeHtml(value: string) {
+export function escapeHtml(value: string) {
   return value.replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character] ?? character);
 }
 
@@ -47,20 +47,34 @@ function htmlForAdmin(payload: JobCreatedPayload) {
   return `<div style="font-family:Arial,sans-serif;line-height:1.6;color:#1d2925"><p>A new MjengoLink job was posted.</p><div style="border-left:4px solid #b7432d;padding:10px 14px;background:#f4e2dc"><strong>${escapeHtml(job.id)} · ${escapeHtml(job.title)}</strong><br>Trade: ${escapeHtml(job.trade)}<br>Location: ${escapeHtml(job.location)}<br>Proposed pay: ${escapeHtml(job.budget)}<br>Eligible active fundis notified: ${payload.eligibleFundis.length}</div><p>Review the admin control room for pilot oversight.</p></div>`;
 }
 
+async function deliverEmail(input: { to: string; subject: string; text: string; html: string }) {
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: { accept: "application/json", authorization: `Bearer ${ENV.resendApiKey}`, "content-type": "application/json" },
+    body: JSON.stringify({ from: ENV.emailFrom, to: [input.to], subject: input.subject, text: input.text, html: input.html, ...(ENV.emailReplyTo ? { reply_to: ENV.emailReplyTo } : {}) }),
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(`Email delivery failed with status ${response.status}${detail ? `: ${detail}` : ""}`);
+  }
+}
+
 async function sendEmail(input: { to: Recipient; subject: string; text: string; html: string }) {
   if (!ENV.resendApiKey || ENV.emailFrom.includes("mjengolink.example")) return { sent: false, reason: "provider_not_configured" as const };
   if (!isEmail(input.to.email)) return { sent: false, reason: "invalid_recipient" as const };
 
-  const response = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: { accept: "application/json", authorization: `Bearer ${ENV.resendApiKey}`, "content-type": "application/json" },
-    body: JSON.stringify({ from: ENV.emailFrom, to: [input.to.email], subject: input.subject, text: input.text, html: input.html, ...(ENV.emailReplyTo ? { reply_to: ENV.emailReplyTo } : {}) }),
-  });
-  if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    throw new Error(`Email provider returned ${response.status}${detail ? `: ${detail}` : ""}`);
-  }
+  await deliverEmail({ ...input, to: input.to.email });
   return { sent: true as const, reason: "sent" as const };
+}
+
+export async function sendAuthEmail(input: { to: string; subject: string; text: string; html: string }) {
+  if (!ENV.resendApiKey) throw new Error("RESEND_API_KEY must be configured to send authentication emails");
+  if (ENV.emailFrom.includes("your-verified-domain.example") || ENV.emailFrom.includes("mjengolink.example")) {
+    throw new Error("EMAIL_FROM must use a verified sender address");
+  }
+  if (!isEmail(input.to)) throw new Error("Invalid authentication email recipient");
+
+  await deliverEmail(input);
 }
 
 export async function notifyJobCreated(payload: JobCreatedPayload) {
