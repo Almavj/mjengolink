@@ -497,17 +497,27 @@ export const appRouter = router({
     }),
     rate: protectedProcedure.input(z.object({ jobId: z.string().min(3).max(32), score: z.number().int().min(1).max(5), comment: z.string().trim().max(1000).optional() })).mutation(async ({ ctx, input }) => {
       requireRole(ctx.user.role, ["client"]);
-      if (!(await isJobClient(input.jobId, ctx.user.id))) throw new Error("You can only rate your own jobs");
+      if (!(await isJobClient(input.jobId, ctx.user.id))) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "You can only rate your own jobs" });
+      }
       const db = await getDb();
-      if (!db) throw new Error("Database is not available");
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database is not available" });
       const [job] = await db.select().from(jobs).where(eq(jobs.id, input.jobId)).limit(1);
-      if (!job || job.status !== "Completed") throw new Error("Feedback is available after the job is completed");
-      const [response] = await db.select().from(jobResponses)
+      if (!job || job.status !== "Completed") {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Feedback is available after the job is completed" });
+      }
+      const [accepted] = await db.select().from(jobResponses)
         .where(and(eq(jobResponses.jobId, input.jobId), eq(jobResponses.status, "Accepted")))
         .orderBy(desc(jobResponses.createdAt)).limit(1);
-      if (!response) throw new Error("Only the accepted fundi can be rated for this job");
+      const [latest] = accepted ? [null] : await db.select().from(jobResponses)
+        .where(eq(jobResponses.jobId, input.jobId))
+        .orderBy(desc(jobResponses.createdAt)).limit(1);
+      const response = accepted ?? latest;
+      if (!response) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "This job has no linked fundi to rate. Show interest must be recorded before feedback." });
+      }
       const [existing] = await db.select().from(ratings).where(and(eq(ratings.jobId, input.jobId), eq(ratings.clientId, ctx.user.id))).limit(1);
-      if (existing) throw new Error("This job has already been rated");
+      if (existing) throw new TRPCError({ code: "CONFLICT", message: "This job has already been rated" });
       await db.insert(ratings).values({ jobId: input.jobId, clientId: ctx.user.id, workerId: response.workerId, score: input.score, comment: input.comment ?? null });
       return { success: true as const };
     }),
