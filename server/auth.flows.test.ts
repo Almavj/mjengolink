@@ -25,11 +25,11 @@ vi.mock("./emailNotifications", async (importOriginal) => {
 
 import { appRouter } from "./routers";
 
-function createContext(): TrpcContext {
+function createContext(origin = "https://mjengolink.vercel.app"): TrpcContext {
   return {
     user: null,
     req: {
-      get: (name: string) => name.toLowerCase() === "origin" ? "https://mjengolink.vercel.app" : undefined,
+      get: (name: string) => name.toLowerCase() === "origin" ? origin : undefined,
       headers: {},
       protocol: "https",
       secure: true,
@@ -124,5 +124,34 @@ describe("email-based auth flows", () => {
 
     expect(mocks.adminGenerateLink).not.toHaveBeenCalled();
     expect(mocks.sendAuthEmail).not.toHaveBeenCalled();
+  });
+
+  it("returns FORBIDDEN for a disallowed origin instead of masking it as a network error", async () => {
+    const caller = appRouter.createCaller(createContext("https://not-allowed.example"));
+
+    await expect(caller.auth.register({
+      name: "Sample User",
+      email: "sample@example.com",
+      password: "a-secure-password",
+    })).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+    expect(mocks.adminGenerateLink).not.toHaveBeenCalled();
+  });
+
+  it("preserves the original Supabase failure when generateLink throws", async () => {
+    mocks.adminGenerateLink.mockRejectedValue(new Error("fetch failed"));
+    const caller = appRouter.createCaller(createContext());
+
+    await expect(caller.auth.register({
+      name: "Sample User",
+      email: "sample@example.com",
+      password: "a-secure-password",
+    })).rejects.toMatchObject({
+      cause: {
+        name: "AuthLinkGenerationError",
+        code: "SUPABASE_SIGNUP_NETWORK_ERROR",
+        message: expect.stringContaining("fetch failed"),
+      },
+    });
   });
 });

@@ -19,8 +19,8 @@ const coordinates = {
 };
 
 class AuthLinkGenerationError extends Error {
-  constructor(message: string, readonly code: string) {
-    super(message);
+  constructor(message: string, readonly code: string, cause?: unknown) {
+    super(message, { cause });
     this.name = "AuthLinkGenerationError";
   }
 }
@@ -28,10 +28,13 @@ class AuthLinkGenerationError extends Error {
 async function requestAuthLink<T>(request: () => Promise<T>, purpose: "signup" | "confirmation" | "recovery") {
   try {
     return await request();
-  } catch {
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    const detail = error instanceof Error ? error.message : String(error);
     throw new AuthLinkGenerationError(
-      `Supabase ${purpose} link request failed before returning a response`,
+      `Supabase ${purpose} link request failed before returning a response: ${detail}`,
       `SUPABASE_${purpose.toUpperCase()}_NETWORK_ERROR`,
+      error,
     );
   }
 }
@@ -76,12 +79,13 @@ export const appRouter = router({
     })).mutation(async ({ ctx, input }) => {
       assertAuthEmailConfigured(input.email);
       const supabase = createSupabaseAdminClient();
+      const redirectTo = getAuthRedirectUrl(ctx.req, "email-confirmed");
       const { data, error } = await requestAuthLink(
         () => supabase.auth.admin.generateLink({
           type: "signup",
           email: input.email,
           password: input.password,
-          options: { data: { name: input.name }, redirectTo: getAuthRedirectUrl(ctx.req, "email-confirmed") },
+          options: { data: { name: input.name }, redirectTo },
         }),
         "signup",
       );
@@ -124,11 +128,12 @@ export const appRouter = router({
     })).mutation(async ({ ctx, input }) => {
       assertAuthEmailConfigured(input.email);
       const supabase = createSupabaseAdminClient();
+      const redirectTo = getAuthRedirectUrl(ctx.req, "email-confirmed");
       const { data, error } = await requestAuthLink(
         () => supabase.auth.admin.generateLink({
           type: "magiclink",
           email: input.email,
-          options: { redirectTo: getAuthRedirectUrl(ctx.req, "email-confirmed") },
+          options: { redirectTo },
         }),
         "confirmation",
       );
@@ -153,11 +158,12 @@ export const appRouter = router({
     })).mutation(async ({ ctx, input }) => {
       assertAuthEmailConfigured(input.email);
       const supabase = createSupabaseAdminClient();
+      const redirectTo = getAuthRedirectUrl(ctx.req, "password-reset");
       const { data, error } = await requestAuthLink(
         () => supabase.auth.admin.generateLink({
           type: "recovery",
           email: input.email,
-          options: { redirectTo: getAuthRedirectUrl(ctx.req, "password-reset") },
+          options: { redirectTo },
         }),
         "recovery",
       );
