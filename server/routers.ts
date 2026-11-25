@@ -59,13 +59,8 @@ function money(value: string) {
 }
 
 function getAuthRedirectUrl(req: TrpcContext["req"], authAction: "email-confirmed" | "password-reset") {
-  const origin = req.get("origin");
-  const allowedOrigins = [
-    ...(process.env.CORS_ORIGINS ?? "").split(",").map(value => value.trim()).filter(Boolean),
-    ...(process.env.NODE_ENV === "development"
-      ? ["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:5173", "http://127.0.0.1:5173"]
-      : []),
-  ];
+  const allowedOrigins = (process.env.CORS_ORIGINS ?? "").split(",").map(value => value.trim()).filter(Boolean);
+  const origin = req.get("origin") || allowedOrigins[0];
   if (!origin || !allowedOrigins.includes(origin)) {
     throw new TRPCError({ code: "FORBIDDEN", message: "This site is not allowed to start an authentication flow" });
   }

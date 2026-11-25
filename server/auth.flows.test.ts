@@ -75,6 +75,24 @@ describe("email-based auth flows", () => {
     }));
   });
 
+  it("uses the configured production origin when no Origin header is present", async () => {
+    mocks.adminGenerateLink.mockResolvedValue({
+      data: { properties: { action_link: "https://auth.example/confirm?token=signup" } },
+      error: null,
+    });
+    const caller = appRouter.createCaller(createContext(""));
+
+    await caller.auth.register({
+      name: "Sample User",
+      email: "sample@example.com",
+      password: "a-secure-password",
+    });
+
+    expect(mocks.adminGenerateLink).toHaveBeenCalledWith(expect.objectContaining({
+      options: expect.objectContaining({ redirectTo: "https://mjengolink.vercel.app/?auth=email-confirmed" }),
+    }));
+  });
+
   it("rejects login when Supabase reports an unconfirmed email", async () => {
     mocks.signInWithPassword.mockResolvedValue({
       data: { user: null, session: null },

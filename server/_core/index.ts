@@ -23,12 +23,9 @@ function getRootCause(error: unknown): unknown {
 async function startServer() {
   const app = express();
   const server = createServer(app);
-  const allowedOrigins = new Set([
-    ...(process.env.CORS_ORIGINS ?? "").split(",").map(origin => origin.trim()).filter(Boolean),
-    ...(process.env.NODE_ENV === "development"
-      ? ["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:5173", "http://127.0.0.1:5173"]
-      : []),
-  ]);
+  const allowedOrigins = new Set(
+    (process.env.CORS_ORIGINS ?? "").split(",").map(origin => origin.trim()).filter(Boolean),
+  );
   app.use((req, res, next) => {
     const origin = req.get("origin");
     if (!origin) {
