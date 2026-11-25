@@ -7,9 +7,18 @@ const t = initTRPC.context<TrpcContext>().create({
   transformer: superjson,
   errorFormatter({ shape, error }) {
     if (error.code !== "INTERNAL_SERVER_ERROR") return shape;
+    const cause = error.cause;
+    const code = cause && typeof cause === "object" && "code" in cause && typeof cause.code === "string"
+      ? cause.code
+      : undefined;
+    const message = code?.startsWith("RESEND_")
+      ? "We couldn't send the email right now. Please try again later."
+      : code?.startsWith("SUPABASE_")
+        ? "We couldn't start the authentication flow. Please try again later."
+        : "An unexpected server error occurred.";
     return {
       ...shape,
-      message: "An unexpected server error occurred.",
+      message,
       data: { ...shape.data, stack: undefined },
     };
   },

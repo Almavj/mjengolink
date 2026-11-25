@@ -39,6 +39,12 @@ async function requestAuthLink<T>(request: () => Promise<T>, purpose: "signup" |
   }
 }
 
+function isExistingEmailError(error: { code?: string; message?: string }) {
+  return error.code === "email_exists"
+    || error.code === "user_already_exists"
+    || /already (been )?registered|already exists/i.test(error.message ?? "");
+}
+
 function requireRole(role: string | null | undefined, allowed: string[]) {
   const normalized = role === "user" ? "client" : role;
   if (!normalized) throw new TRPCError({ code: "UNAUTHORIZED", message: "Authentication required" });
@@ -90,6 +96,12 @@ export const appRouter = router({
         "signup",
       );
       if (error) {
+        if (isExistingEmailError(error)) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: "This email is already registered. If it is not verified yet, use 'Resend confirmation email' below to get a new link, or sign in if you have already confirmed it.",
+          });
+        }
         throw new TRPCError({ code: "BAD_REQUEST", message: error.message });
       }
       const actionLink = data?.properties?.action_link;

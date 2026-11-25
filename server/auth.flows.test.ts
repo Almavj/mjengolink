@@ -111,6 +111,25 @@ describe("email-based auth flows", () => {
     expect(mocks.sendAuthEmail).not.toHaveBeenCalled();
   });
 
+  it("tells an existing unverified account to resend its confirmation email", async () => {
+    mocks.adminGenerateLink.mockResolvedValue({
+      data: null,
+      error: { code: "email_exists", message: "A user with this email address has already been registered" },
+    });
+    const caller = appRouter.createCaller(createContext());
+
+    await expect(caller.auth.register({
+      name: "Sample User",
+      email: "sample@example.com",
+      password: "a-secure-password",
+    })).rejects.toMatchObject({
+      code: "CONFLICT",
+      message: expect.stringContaining("already registered"),
+    });
+
+    expect(mocks.sendAuthEmail).not.toHaveBeenCalled();
+  });
+
   it("rejects a misconfigured sender before creating a Supabase user", async () => {
     vi.stubEnv("RESEND_API_KEY", "test-key");
     vi.stubEnv("EMAIL_FROM", "mjengolink");

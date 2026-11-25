@@ -484,8 +484,9 @@ function LoginForm() {
       await utils.auth.me.invalidate();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Unable to sign in. Please try again.");
-      if (cause instanceof Error && cause.message.includes("Confirm your email address")) {
+      if (cause instanceof Error && (cause.message.includes("Confirm your email address") || cause.message.includes("already registered"))) {
         setConfirmationPending(true);
+        setMode("login");
       }
     }
   };
