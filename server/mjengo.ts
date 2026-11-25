@@ -206,6 +206,7 @@ export async function findMatchingFundis(jobId: string) {
     const distance = haversineKm(job.latitudeE6, job.longitudeE6, profile.latitudeE6, profile.longitudeE6);
     return Boolean(profile.availability) && (skillsByWorker.get(profile.id) ?? []).includes(job.trade) && (distance === null || distance <= job.radiusKm);
   }).map(({ profile, user }) => ({
+    userId: user.id,
     name: user.name ?? "Fundi",
     email: user.email ?? "",
     distance: formatDistance(haversineKm(job.latitudeE6, job.longitudeE6, profile.latitudeE6, profile.longitudeE6)),
@@ -360,7 +361,7 @@ export type AppNotification = {
 
 export async function createNotification(input: {
   userId: number;
-  type: "interest" | "decision" | "chat" | "message";
+  type: "job" | "interest" | "decision" | "chat" | "message";
   title: string;
   body: string;
   jobId?: string;

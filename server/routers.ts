@@ -396,6 +396,18 @@ export const appRouter = router({
         status: "Posted",
       });
       const matches = await findMatchingFundis(jobId);
+      const notifiedFundiIds = new Set<number>();
+      for (const fundi of matches) {
+        if (notifiedFundiIds.has(fundi.userId)) continue;
+        notifiedFundiIds.add(fundi.userId);
+        await createNotification({
+          userId: fundi.userId,
+          type: "job",
+          title: "New job matching your trade",
+          body: `${ctx.user.name ?? "A client"} posted ${input.title} in ${input.locationText}.`,
+          jobId,
+        });
+      }
       const admins = await db.select().from(users).where(eq(users.role, "admin")).limit(1);
       const notification = await notifyJobCreated({
         job: { id: jobId, title: input.title, trade: input.trade, location: input.locationText, budget: `KSh ${budgetAmount.toLocaleString("en-KE")}`, startDate, description: input.description },

@@ -328,6 +328,10 @@ function Home() {
       setShowInbox(true);
       return;
     }
+    if (notification.type === "job") {
+      setActiveNav("overview");
+      return;
+    }
     if (notification.jobId && role === "client") {
       const job = store.jobs.find(item => item.id === notification.jobId);
       if (job) {
@@ -746,8 +750,8 @@ function ResponsesModal({ job, responders, loading, pendingDecision, pendingChat
 }
 
 function NotificationModal({ notifications, loading, unreadCount, pending, onSelect, onMarkAll, onOpenInbox, onClose }: { notifications: AppNotificationView[]; loading: boolean; unreadCount: number; pending: boolean; onSelect: (notification: AppNotificationView) => void; onMarkAll: () => void; onOpenInbox: () => void; onClose: () => void }) {
-  return <div className="modal-scrim" onClick={onClose}><section className="job-modal notification-modal" onClick={(event) => event.stopPropagation()}><div className="modal-top"><div><div className="eyebrow"><span className="eyebrow-line" />NOTIFICATIONS / {unreadCount} UNREAD</div><h2>What needs your attention</h2><p>Interest, job decisions and private messages appear here.</p></div><button className="icon-button" onClick={onClose} aria-label="Close notifications"><X size={19} /></button></div><div className="notification-toolbar"><button className="text-button" onClick={onOpenInbox}><MessageCircle size={14} />Open inbox</button>{unreadCount > 0 && <button className="outline-button compact" disabled={pending} onClick={onMarkAll}><Check size={14} />Mark all read</button>}</div>{loading ? <div className="auth-loading"><span className="live-dot" />Loading notifications…</div> : notifications.length === 0 ? <EmptyState title="You are all caught up" description="Notifications about interest, job decisions and messages will show up here." /> : <div className="notification-list">{notifications.map((notification) => {
-    const Icon = notification.type === "message" || notification.type === "chat" ? MessageCircle : notification.type === "decision" ? CheckCircle2 : Users;
+  return <div className="modal-scrim" onClick={onClose}><section className="job-modal notification-modal" onClick={(event) => event.stopPropagation()}><div className="modal-top"><div><div className="eyebrow"><span className="eyebrow-line" />NOTIFICATIONS / {unreadCount} UNREAD</div><h2>What needs your attention</h2><p>New jobs, interest, job decisions and private messages appear here.</p></div><button className="icon-button" onClick={onClose} aria-label="Close notifications"><X size={19} /></button></div><div className="notification-toolbar"><button className="text-button" onClick={onOpenInbox}><MessageCircle size={14} />Open inbox</button>{unreadCount > 0 && <button className="outline-button compact" disabled={pending} onClick={onMarkAll}><Check size={14} />Mark all read</button>}</div>{loading ? <div className="auth-loading"><span className="live-dot" />Loading notifications…</div> : notifications.length === 0 ? <EmptyState title="You are all caught up" description="Notifications about new jobs, interest, job decisions and messages will show up here." /> : <div className="notification-list">{notifications.map((notification) => {
+    const Icon = notification.type === "message" || notification.type === "chat" ? MessageCircle : notification.type === "decision" ? CheckCircle2 : notification.type === "job" ? ClipboardList : Users;
     return <button className={`notification-item ${notification.isRead ? "" : "unread"}`} key={notification.id} onClick={() => onSelect(notification)}><span className="notification-icon"><Icon size={16} /></span><span className="notification-copy"><strong>{notification.title}</strong><span>{notification.body}</span><small>{notification.createdAt}</small></span>{!notification.isRead && <i className="notification-dot" />}<ChevronRight size={15} /></button>;
   })}</div>}</section></div>;
 }
