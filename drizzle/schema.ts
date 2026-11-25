@@ -108,6 +108,18 @@ export const messages = pgTable("messages", {
   readAt: timestamp("readAt", { withTimezone: true }),
 });
 
+export const notifications = pgTable("notifications", {
+  id: serial("id").primaryKey(),
+  userId: integer("userId").notNull().references(() => users.id, { onDelete: "cascade" }),
+  type: varchar("type", { length: 32 }).notNull(),
+  title: varchar("title", { length: 160 }).notNull(),
+  body: varchar("body", { length: 500 }).notNull(),
+  jobId: varchar("jobId", { length: 32 }),
+  conversationId: integer("conversationId"),
+  readAt: timestamp("readAt", { withTimezone: true }),
+  createdAt: timestamp("createdAt", { withTimezone: true }).defaultNow().notNull(),
+});
+
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 export type WorkerProfile = typeof workerProfiles.$inferSelect;

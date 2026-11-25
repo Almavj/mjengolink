@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { sendAuthEmail } from "./emailNotifications";
+import { notifyConversationEvent, sendAuthEmail } from "./emailNotifications";
 
 describe("Brevo authentication email delivery", () => {
   afterEach(() => {
@@ -89,5 +89,25 @@ describe("Brevo authentication email delivery", () => {
     const payload = JSON.parse(options.body);
     expect(payload.sender).toEqual({ name: "MjengoLink", email: "notifications@example.com" });
     expect(payload.replyTo).toEqual({ email: "support@example.com" });
+  });
+
+  it("emails the fundi when a client opens a private chat", async () => {
+    vi.stubEnv("BREVO_API_KEY", "test-key");
+    vi.stubEnv("EMAIL_FROM", "MjengoLink <notifications@example.com>");
+    vi.stubEnv("CORS_ORIGINS", "https://mjengolink.vercel.app");
+    const fetchMock = stubBrevo({ messageId: "email-id" });
+
+    await notifyConversationEvent({
+      recipient: { name: "Fundi", email: "fundi@example.com" },
+      actorName: "Client",
+      job: { id: "ML-TEST", title: "Roof repair" },
+      kind: "chat",
+    });
+
+    const options = fetchMock.mock.calls[0]?.[1] as { body: string };
+    const payload = JSON.parse(options.body);
+    expect(payload.subject).toContain("new MjengoLink chat");
+    expect(payload.htmlContent).toContain("https://mjengolink.vercel.app/");
+    expect(payload.htmlContent).toContain("opened a private chat");
   });
 });

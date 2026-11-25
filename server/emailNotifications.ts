@@ -152,4 +152,39 @@ export async function notifyJobCreated(payload: JobCreatedPayload) {
   return { providerConfigured: Boolean(ENV.brevoApiKey && !ENV.emailFrom.includes("mjengolink.example")), recipientCount: recipients.length, sentCount, failures, adminOversight: Boolean(payload.admin) };
 }
 
+export type ConversationEventPayload = {
+  recipient: Recipient;
+  actorName: string;
+  job: { id: string; title: string };
+  kind: "accepted" | "chat" | "message";
+  message?: string;
+};
+
+function appUrl() {
+  const origin = (process.env.CORS_ORIGINS ?? "").split(",").map(value => value.trim()).find(Boolean);
+  return origin ? `${origin.replace(/\/$/, "")}/` : "";
+}
+
+export async function notifyConversationEvent(payload: ConversationEventPayload) {
+  const isAcceptance = payload.kind === "accepted";
+  const isChat = payload.kind === "chat";
+  const isMessage = payload.kind === "message";
+  const link = appUrl();
+  const excerpt = payload.message ? `“${payload.message.slice(0, 160)}${payload.message.length > 160 ? "…" : ""}”` : "";
+  const subject = isMessage
+    ? `New message on MjengoLink · ${payload.job.id}`
+    : `You have a new MjengoLink chat · ${payload.job.id}`;
+  const eventLine = isAcceptance
+    ? `${payload.actorName} accepted your interest in ${payload.job.title} (${payload.job.id}). The client can now open a private chat.`
+    : isChat
+      ? `${payload.actorName} opened a private chat about ${payload.job.title} (${payload.job.id}).`
+      : `${payload.actorName} sent you a new message about ${payload.job.title} (${payload.job.id}).`;
+  const closing = isMessage
+    ? "Sign in to MjengoLink to read and reply."
+    : "Sign in to MjengoLink to see the conversation and agree the scope, price and site details.";
+  const text = `Hi ${payload.recipient.name},\n\n${eventLine}\n${isMessage ? `\n${excerpt}\n` : ""}\n${closing}\n${link ? `${link}\n` : ""}\nMjengoLink`;
+  const html = `<div style="font-family:Arial,sans-serif;line-height:1.6;color:#1d2925"><p>Hi ${escapeHtml(payload.recipient.name)},</p><p>${escapeHtml(eventLine)}</p>${isMessage && excerpt ? `<blockquote style="border-left:4px solid #0b5d43;padding:10px 14px;background:#e1eee7">${escapeHtml(excerpt)}</blockquote>` : ""}<p>${escapeHtml(closing)}${link ? ` <a href="${escapeHtml(link)}">here</a>` : ""}</p><p>MjengoLink</p></div>`;
+  return sendEmail({ to: payload.recipient, subject, text, html });
+}
+
 export type { JobCreatedPayload };

@@ -2,7 +2,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { getDb } from "./db";
 import { getAvatarUrl } from "./profilePhoto";
-import { conversations, jobs, jobResponses, messages, ratings, reports, users, workerProfiles, workerSkills } from "../drizzle/schema";
+import { conversations, jobs, jobResponses, messages, notifications, ratings, reports, users, workerProfiles, workerSkills } from "../drizzle/schema";
 import type { User, WorkerProfile } from "../drizzle/schema";
 
 export const PILOT_TRADES = ["Masonry", "Plumbing", "Electrical", "Painting", "Carpentry", "Welding"] as const;
@@ -344,5 +344,55 @@ export async function getConversationMessages(conversationId: number, currentUse
     body: message.body,
     createdAt: relativeDate(message.createdAt),
     mine: message.senderId === currentUser.id,
+  }));
+}
+
+export type AppNotification = {
+  id: number;
+  type: string;
+  title: string;
+  body: string;
+  jobId: string | null;
+  conversationId: number | null;
+  isRead: boolean;
+  createdAt: string;
+};
+
+export async function createNotification(input: {
+  userId: number;
+  type: "interest" | "decision" | "chat" | "message";
+  title: string;
+  body: string;
+  jobId?: string;
+  conversationId?: number;
+}) {
+  const db = await getDb();
+  if (!db) return;
+  await db.insert(notifications).values({
+    userId: input.userId,
+    type: input.type,
+    title: input.title.slice(0, 160),
+    body: input.body.slice(0, 500),
+    jobId: input.jobId ?? null,
+    conversationId: input.conversationId ?? null,
+  });
+}
+
+export async function getNotifications(userId: number): Promise<AppNotification[]> {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  const rows = await db.select().from(notifications)
+    .where(eq(notifications.userId, userId))
+    .orderBy(desc(notifications.createdAt))
+    .limit(50);
+  return rows.map(row => ({
+    id: row.id,
+    type: row.type,
+    title: row.title,
+    body: row.body,
+    jobId: row.jobId,
+    conversationId: row.conversationId,
+    isRead: Boolean(row.readAt),
+    createdAt: relativeDate(row.createdAt),
   }));
 }
