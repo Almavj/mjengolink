@@ -6,6 +6,11 @@ const mocks = vi.hoisted(() => ({
   adminGenerateLink: vi.fn(),
   signInWithPassword: vi.fn(),
   sendAuthEmail: vi.fn(),
+  dbSelect: vi.fn(),
+}));
+
+vi.mock("./db", () => ({
+  getDb: async () => ({ select: mocks.dbSelect }),
 }));
 
 vi.mock("./_core/supabase", () => ({
@@ -38,9 +43,21 @@ function createContext(origin = "https://mjengolink.vercel.app"): TrpcContext {
   };
 }
 
+function stubUserExists(exists: boolean) {
+  mocks.dbSelect.mockReturnValue({
+    from: () => ({
+      where: () => ({
+        limit: async () => exists ? [{ id: 1 }] : [],
+      }),
+    }),
+  });
+}
+
 describe("email-based auth flows", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.dbSelect.mockReset();
+    stubUserExists(true);
     vi.stubEnv("CORS_ORIGINS", "https://mjengolink.vercel.app");
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("BREVO_API_KEY", "test-key");
@@ -127,6 +144,39 @@ describe("email-based auth flows", () => {
     await expect(caller.auth.requestPasswordReset({ email: "missing@example.com" }))
       .resolves.toEqual({ success: true });
     expect(mocks.sendAuthEmail).not.toHaveBeenCalled();
+  });
+
+  it("does not generate a confirmation link when the email is absent from the application database", async () => {
+    stubUserExists(false);
+    const caller = appRouter.createCaller(createContext());
+
+    await expect(caller.auth.resendConfirmation({ email: "missing@example.com" }))
+      .resolves.toEqual({ success: true });
+
+    expect(mocks.adminGenerateLink).not.toHaveBeenCalled();
+    expect(mocks.sendAuthEmail).not.toHaveBeenCalled();
+  });
+
+  it("sends a confirmation link only when the email exists in the application database", async () => {
+    stubUserExists(true);
+    mocks.adminGenerateLink.mockResolvedValue({
+      data: { properties: { action_link: "https://auth.example/confirm?token=signup" } },
+      error: null,
+    });
+    const caller = appRouter.createCaller(createContext());
+
+    await expect(caller.auth.resendConfirmation({ email: "SAMPLE@example.com" }))
+      .resolves.toEqual({ success: true });
+
+    expect(mocks.adminGenerateLink).toHaveBeenCalledWith(expect.objectContaining({
+      type: "magiclink",
+      email: "sample@example.com",
+      options: { redirectTo: "https://mjengolink.vercel.app/?auth=email-confirmed" },
+    }));
+    expect(mocks.sendAuthEmail).toHaveBeenCalledWith(expect.objectContaining({
+      to: "sample@example.com",
+      text: expect.stringContaining("https://auth.example/confirm?token=signup"),
+    }));
   });
 
   it("tells an existing unverified account to resend its confirmation email", async () => {

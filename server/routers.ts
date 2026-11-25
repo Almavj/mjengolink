@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { getDb } from "./db";
@@ -43,6 +43,17 @@ function isExistingEmailError(error: { code?: string; message?: string }) {
   return error.code === "email_exists"
     || error.code === "user_already_exists"
     || /already (been )?registered|already exists/i.test(error.message ?? "");
+}
+
+async function findUserByEmail(email: string) {
+  const db = await getDb();
+  if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database is not available" });
+  const [user] = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(sql`lower(${users.email}) = ${email}`)
+    .limit(1);
+  return user;
 }
 
 function requireRole(role: string | null | undefined, allowed: string[]) {
@@ -133,6 +144,7 @@ export const appRouter = router({
     resendConfirmation: publicProcedure.input(z.object({
       email: z.string().trim().email().max(320).transform(value => value.toLowerCase()),
     })).mutation(async ({ ctx, input }) => {
+      if (!(await findUserByEmail(input.email))) return { success: true };
       assertAuthEmailConfigured(input.email);
       const supabase = createSupabaseAdminClient();
       const redirectTo = getAuthRedirectUrl(ctx.req, "email-confirmed");
