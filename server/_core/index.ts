@@ -112,7 +112,8 @@ async function startServer() {
           : undefined;
         console.error("[tRPC] Internal request failure", {
           path,
-          cause: cause instanceof Error && causeCode ? cause.message : cause instanceof Error ? cause.name : "Unknown internal error",
+          cause: cause instanceof Error ? cause.message : "Unknown internal error",
+          name: cause instanceof Error ? cause.name : undefined,
           code: causeCode,
         });
       },

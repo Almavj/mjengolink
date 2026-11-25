@@ -13,11 +13,15 @@ vi.mock("./_core/supabase", () => ({
   createSupabaseClient: () => ({ auth: { signInWithPassword: mocks.signInWithPassword } }),
 }));
 
-vi.mock("./emailNotifications", () => ({
-  escapeHtml: (value: string) => value,
-  notifyJobCreated: vi.fn(),
-  sendAuthEmail: mocks.sendAuthEmail,
-}));
+vi.mock("./emailNotifications", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./emailNotifications")>();
+  return {
+    ...actual,
+    escapeHtml: (value: string) => value,
+    notifyJobCreated: vi.fn(),
+    sendAuthEmail: mocks.sendAuthEmail,
+  };
+});
 
 import { appRouter } from "./routers";
 
@@ -39,6 +43,8 @@ describe("email-based auth flows", () => {
     vi.clearAllMocks();
     vi.stubEnv("CORS_ORIGINS", "https://mjengolink.vercel.app");
     vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("RESEND_API_KEY", "test-key");
+    vi.stubEnv("EMAIL_FROM", "MjengoLink <notifications@example.com>");
   });
 
   afterEach(() => {
@@ -102,6 +108,21 @@ describe("email-based auth flows", () => {
     mocks.sendAuthEmail.mockClear();
     await expect(caller.auth.requestPasswordReset({ email: "missing@example.com" }))
       .resolves.toEqual({ success: true });
+    expect(mocks.sendAuthEmail).not.toHaveBeenCalled();
+  });
+
+  it("rejects a misconfigured sender before creating a Supabase user", async () => {
+    vi.stubEnv("RESEND_API_KEY", "test-key");
+    vi.stubEnv("EMAIL_FROM", "mjengolink");
+    const caller = appRouter.createCaller(createContext());
+
+    await expect(caller.auth.register({
+      name: "Sample User",
+      email: "sample@example.com",
+      password: "a-secure-password",
+    })).rejects.toMatchObject({ cause: { code: "RESEND_SENDER_NOT_CONFIGURED" } });
+
+    expect(mocks.adminGenerateLink).not.toHaveBeenCalled();
     expect(mocks.sendAuthEmail).not.toHaveBeenCalled();
   });
 });

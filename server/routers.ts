@@ -4,7 +4,7 @@ import { z } from "zod";
 import { getDb } from "./db";
 import { jobs, jobResponses, ratings, reports, users, workerProfiles, workerSkills } from "../drizzle/schema";
 import { createJobId, createReportId, findMatchingFundis, getDashboardData, getWorkerProfile, isJobClient, JOB_STATUSES, PILOT_TRADES } from "./mjengo";
-import { escapeHtml, notifyJobCreated, sendAuthEmail } from "./emailNotifications";
+import { assertAuthEmailConfigured, escapeHtml, notifyJobCreated, sendAuthEmail } from "./emailNotifications";
 import { adminProcedure, protectedProcedure, publicProcedure, router } from "./_core/trpc";
 import { systemRouter } from "./_core/systemRouter";
 import { endSupabaseSession, setSessionCookies } from "./_core/auth";
@@ -74,6 +74,7 @@ export const appRouter = router({
       email: z.string().trim().email().max(320).transform(value => value.toLowerCase()),
       password: z.string().min(8).max(128),
     })).mutation(async ({ ctx, input }) => {
+      assertAuthEmailConfigured(input.email);
       const supabase = createSupabaseAdminClient();
       const { data, error } = await requestAuthLink(
         () => supabase.auth.admin.generateLink({
@@ -121,6 +122,7 @@ export const appRouter = router({
     resendConfirmation: publicProcedure.input(z.object({
       email: z.string().trim().email().max(320).transform(value => value.toLowerCase()),
     })).mutation(async ({ ctx, input }) => {
+      assertAuthEmailConfigured(input.email);
       const supabase = createSupabaseAdminClient();
       const { data, error } = await requestAuthLink(
         () => supabase.auth.admin.generateLink({
@@ -149,6 +151,7 @@ export const appRouter = router({
     requestPasswordReset: publicProcedure.input(z.object({
       email: z.string().trim().email().max(320).transform(value => value.toLowerCase()),
     })).mutation(async ({ ctx, input }) => {
+      assertAuthEmailConfigured(input.email);
       const supabase = createSupabaseAdminClient();
       const { data, error } = await requestAuthLink(
         () => supabase.auth.admin.generateLink({

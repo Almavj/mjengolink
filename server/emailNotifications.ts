@@ -56,17 +56,19 @@ function htmlForAdmin(payload: JobCreatedPayload) {
 
 async function deliverEmail(input: { to: string; subject: string; text: string; html: string }) {
   let response: Response;
+  const replyTo = ENV.emailReplyTo.trim();
   try {
     response = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: { accept: "application/json", authorization: `Bearer ${ENV.resendApiKey}`, "content-type": "application/json" },
-      body: JSON.stringify({ from: ENV.emailFrom, to: [input.to], subject: input.subject, text: input.text, html: input.html, ...(ENV.emailReplyTo ? { reply_to: ENV.emailReplyTo } : {}) }),
+      body: JSON.stringify({ from: ENV.emailFrom, to: [input.to], subject: input.subject, text: input.text, html: input.html, ...(replyTo && isEmail(replyTo) ? { reply_to: replyTo } : {}) }),
     });
   } catch {
     throw new EmailDeliveryError("Resend request failed before receiving a response", "RESEND_NETWORK_ERROR");
   }
   if (!response.ok) {
     let providerCode: string | undefined;
+    let providerDetail: string | undefined;
     try {
       const body: unknown = await response.json();
       if (body && typeof body === "object") {
@@ -76,12 +78,20 @@ async function deliverEmail(input: { to: string; subject: string; text: string; 
         if (candidate && /^[a-z0-9_-]{1,64}$/i.test(candidate)) {
           providerCode = candidate.toUpperCase().replaceAll("-", "_");
         }
+        if ("message" in body && typeof body.message === "string") providerDetail = body.message;
+        if ("errors" in body && Array.isArray(body.errors)) {
+          const errors = body.errors
+            .map((error: unknown) => error && typeof error === "object" && "message" in error && typeof error.message === "string" ? error.message : undefined)
+            .filter((message): message is string => Boolean(message));
+          if (errors.length) providerDetail = [providerDetail, ...errors].filter(Boolean).join("; ");
+        }
       }
     } catch {
       // The HTTP status remains useful when the provider response isn't JSON.
     }
     const code = providerCode ? `RESEND_${providerCode}` : `RESEND_HTTP_${response.status}`;
-    throw new EmailDeliveryError(`Resend rejected the email request with HTTP ${response.status}`, code);
+    const suffix = providerDetail ? `: ${providerDetail}` : "";
+    throw new EmailDeliveryError(`Resend rejected the email request with HTTP ${response.status}${suffix}`, code);
   }
 }
 
@@ -93,17 +103,24 @@ async function sendEmail(input: { to: Recipient; subject: string; text: string; 
   return { sent: true as const, reason: "sent" as const };
 }
 
-export async function sendAuthEmail(input: { to: string; subject: string; text: string; html: string }) {
+export function assertAuthEmailConfigured(to: string) {
   if (!ENV.resendApiKey) {
     throw new EmailDeliveryError("RESEND_API_KEY is missing from the backend environment", "RESEND_API_KEY_MISSING");
   }
   if (ENV.emailFrom.includes("your-verified-domain.example") || ENV.emailFrom.includes("mjengolink.example")) {
     throw new EmailDeliveryError("EMAIL_FROM must use a verified sender address", "RESEND_SENDER_NOT_CONFIGURED");
   }
-  if (!isEmail(input.to)) {
+  const senderAddress = ENV.emailFrom.match(/<([^<>]+)>/)?.[1] ?? ENV.emailFrom;
+  if (!isEmail(senderAddress)) {
+    throw new EmailDeliveryError("EMAIL_FROM must be an address or a 'Name <address>' sender", "RESEND_SENDER_NOT_CONFIGURED");
+  }
+  if (!isEmail(to)) {
     throw new EmailDeliveryError("The authentication email recipient is invalid", "AUTH_EMAIL_RECIPIENT_INVALID");
   }
+}
 
+export async function sendAuthEmail(input: { to: string; subject: string; text: string; html: string }) {
+  assertAuthEmailConfigured(input.to);
   await deliverEmail(input);
 }
 
